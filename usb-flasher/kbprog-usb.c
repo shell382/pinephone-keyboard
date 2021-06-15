@@ -693,6 +693,11 @@ int main(int ac, char* av[])
 {
 	bootloader_fd = bootloader_open();
 
+	if (ac == 2 && !strcmp(av[1], "reset")) {
+		cmd_software_reset();
+		return 0;
+	}
+
 	cmd_abort();
 
 	printf("FW=0x%04hx BOOT=0x%04hx\n", cmd_get_ver_fw(), cmd_get_ver_spec());
