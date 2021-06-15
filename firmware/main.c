@@ -214,7 +214,6 @@ static uint8_t i2c_addr = 0;
 static uint8_t i2c_regs[I2C_N_REGS] = {0xaa, 0x55};
 static uint8_t i2c_cmd[I2C_N_REGS];
 static uint8_t i2c_cmd_len = 0;
-static uint8_t go_boot = 0;
 
 void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 {						    
@@ -238,15 +237,6 @@ void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 		tmp = P0_I2CBDB;
 		if (i2c_cmd_len < 16)
 			i2c_cmd[i2c_cmd_len++] = tmp;
-
-		if (i2c_cmd_len) {
-			if (i2c_cmd[0] == 0xa0)
-				ext_int_assert();
-			else if (i2c_cmd[0] == 0xa1)
-				ext_int_deassert();
-			else if (i2c_cmd[0] == 0xa2)
-				go_boot = 1;
-		}
 
 		PAGESW = 0;
 
@@ -359,13 +349,6 @@ void main(void)
 	
 	keyscan_idle();
 	while (1) {
-		if (go_boot) {
-			EA = 0;
-			__asm__("mov r6,#0x5a");
-			__asm__("mov r7,#0xe7");
-			__asm__("ljmp 0x0118");
-		}
-
 		if (scan_active) {
 			uint8_t active_rows = keyscan_scan(i2c_regs + 4);
 			if (!active_rows) {
@@ -375,6 +358,13 @@ void main(void)
 				// power down
 				//PCON |= BIT(1);
 				//__asm__("nop");
+			}
+			
+			if (i2c_regs[4 + 0] & BIT(2) && i2c_regs[4 + 2] & BIT(5) && i2c_regs[4 + 4] & BIT(2)) {
+				EA = 0;
+				__asm__("mov r6,#0x5a");
+				__asm__("mov r7,#0xe7");
+				__asm__("ljmp 0x0118");
 			}
 
 			continue;
