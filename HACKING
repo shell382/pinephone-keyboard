@@ -1,0 +1,63 @@
+Pinephone keyboard firmware
+---------------------------
+
+Current firmware implementation relies on polling the key matrix
+once every 20ms.
+
+The controller has ability to detect change on
+the row input port, so it is possible to ground all column GPIOs
+enable pull-ups on row GPIOs, and wait on change on the row GPIOs.
+
+This only works when no key is pressed, otherwise one pressed
+key would mask changes in the state of other keys on the same row.
+This is good to achieve large power savings by not polling when
+we detect that no keys are pressed, which is the normal state
+of all keys.
+
+Firmware thus switches between two modes of operation:
+
+- idle    - when no keys are pressed, columns are grouded, rows are pulled up
+            and the controller only reacts on the change in the row GPIOs
+          - when the change is detected, it switches to active mode
+- active  - when a key is pressed, the firmware performs periodic
+            full scans of the keyboard matrix, to determine what keys
+            are actually pressed
+          - when no keys are pressed anymore it switches to idle mode
+
+It is possible to power down the CPU and all peripherals in idle mode
+via PCON.PD bit and only wait to be woken up by GPIO change interrupt.
+(or I2C interrupt)
+
+My prototype keyboard has Z key always pressed due to some HW bug,
+so this method of switching to idle mode and powering down the
+controller will not work on my keyboard. The firmware implements
+in this case a always active polling mode.
+
+
+Observations
+------------
+
+- Power consumption in polled mode is about 20mW.
+- I2C interrupts don't always wake from power down. (maybe the wakeup
+  only works on the I2C address match condition, as stated in the manual
+  so we need to ensure that the controller is not put back to powerdown
+  mode, until the I2C transaction finishes)
+
+
+How to flash the firmware
+-------------------------
+
+- If you have original firmware, it's enough to just run the flashing tool.
+- If you have this firmware, you can enter flashing mode by pressing
+  FN + PINE + F
+- If you have broken firmware, you need to short P90 (7th test pad from the left)
+  to GND and power cycle the keyboard controller.
+  - Power cycling requires powering down the connected pinehone and maybe
+    ensuring VOUT is disabled on the kb charger (can be done via I2C,
+    or by pressing the charger key)
+  - You need to keep P90 shorted until the flashing is complete.
+- You can insert the flasing USB cable safely even with 5V/VBUS wire
+  connected regardless of whether the charger's VOUT is enabled or not.
+- Flashing tool is configured by modifying the source code for now.
+  If your firmware grows, don't forget to increase the flashing area
+  size. Currently it's set to 0x2000 - 0x2600.
