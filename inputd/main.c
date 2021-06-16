@@ -333,6 +333,8 @@ int compact(int* keys, int len)
 static int uinput_fd = -1;
 static int pressed_keys[128]; // contains currently pressed phys_idxs in press order
 static int pressed_count;
+static int fn_mode = 0;
+static int pine_mode = 0;
 
 void on_press(uint8_t phys_idx)
 {
@@ -347,12 +349,30 @@ void on_press(uint8_t phys_idx)
 	int fn_idx = get_index(pressed_keys, pressed_count, 0x52);
 	int pine_idx = get_index(pressed_keys, pressed_count, 0x31);
 
+	if (key == KEY_ESC && (fn_mode || pine_mode)) {
+		fn_mode = pine_mode = 0;
+		return;
+	}
+
 	const int* keys = keymap_base[phys_idx];
-	if (fn_idx >= 0) {
+	if (fn_idx >= 0 || fn_mode) {
+		if (key == KEY_ESC) {
+			fn_mode = 1;
+			return;
+		}
+	
 		keys = keymap_fn[phys_idx];
-	} else if (pine_idx >= 0) {
+	} else if (pine_idx >= 0 || pine_mode) {
+		if (key == KEY_ESC) {
+			pine_mode = 1;
+			return;
+		}
+
 		keys = keymap_pine[phys_idx];
 	}
+	
+	if (!keys[0])
+		keys = keymap_base[phys_idx];
 
 	if (keys[0]) {
 		emit_ev(uinput_fd, EV_KEY, keys[0], 1);
@@ -378,11 +398,14 @@ void on_release(uint8_t phys_idx)
 	int pine_idx = get_index(pressed_keys, pressed_count, 0x31);
 
 	const int* keys = keymap_base[phys_idx];
-	if (fn_idx >= 0) {
+	if (fn_idx >= 0 || fn_mode) {
 		keys = keymap_fn[phys_idx];
-	} else if (pine_idx >= 0) {
+	} else if (pine_idx >= 0 || pine_mode) {
 		keys = keymap_pine[phys_idx];
 	}
+
+	if (!keys[0])
+		keys = keymap_base[phys_idx];
 
 	if (keys[0]) {
 		emit_ev(uinput_fd, EV_KEY, keys[0], 0);
