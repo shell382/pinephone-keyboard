@@ -270,6 +270,9 @@ static uint8_t i2c_regs[I2C_N_REGS] = {0xaa, 0x55};
 static uint8_t i2c_cmd[I2C_N_REGS];
 static uint8_t i2c_cmd_len = 0;
 
+//XXX: how to determine end of I2C transaction from the interrupt?
+//XXX: we need this to be able to determine when it's safe to go back to sleep/power down
+
 void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 {						    
 	uint8_t saved_page = PAGESW;
@@ -410,11 +413,12 @@ void main(void)
 	//uint16_t ticks = 0;
 	while (1) {
 		if (!run_tasks) {
-			// power down
+			// power down (timers don't work in power-down)
 			//PCON |= BIT(1);
-
-			// go to idle CPU mode when there's nothing to do
+			// go to idle CPU mode when there's nothing to do (doesn't help much)
+			// switching to LOSC may work better
 			//PCON |= BIT(0);
+
 			__asm__("nop");
 			continue;
 		}
