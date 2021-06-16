@@ -44,7 +44,7 @@
 #include <linux/uinput.h>
 
 #define DEBUG 0
-#define MEGI_PROTO_BUG 1
+#define MEGI_PROTO_BUG 0
 
 #if DEBUG
 #define debug(args...) printf(args)
