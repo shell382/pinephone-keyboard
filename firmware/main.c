@@ -18,21 +18,26 @@
  */
 
 #include <stdint.h>
+#include <string.h>
 #include <em85f684a.h>
+
+// configuration (we can make this runtime configurable via i2c)
+// polled input mode is necessary if some rows are always on
+#define POLL_INPUT 1
 
 #define BIT(n) (1u << (n))
 
-// we just use this interrupt for wakeup from sleep on input change
-void pinchange_interupt(void) __interrupt(IRQ_PINCHANGE)
-{
-	// disable all input change interrupts
-	P0_ICEN = BIT(5);
-}
-
+// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
 #define T0_SET_TIMEOUT(n) { \
 	TL0 = 0x00; \
 	TH0 = (0x10000u - n) >> 8; \
 	TL0 = (0x10000u - n) & 0xff; \
+	}
+
+#define T1_SET_TIMEOUT(n) { \
+	TL1 = 0x00; \
+	TH1 = (0x10000u - n) >> 8; \
+	TL1 = (0x10000u - n) & 0xff; \
 	}
 
 #define delay_us(n) { \
@@ -41,6 +46,38 @@ void pinchange_interupt(void) __interrupt(IRQ_PINCHANGE)
 	TH0 = (0x10000u - 2 * n) >> 8; \
 	TL0 = (0x10000u - 2 * n) & 0xff; \
 	while (!TF0); \
+}
+
+static __sbit p6_changed = 0;
+static __sbit run_tasks = 0;
+
+// we use this interrupt for wakeup from sleep on input change
+
+void pinchange_interupt(void) __interrupt(IRQ_PINCHANGE)
+{
+	uint8_t saved_page = PAGESW;
+
+	PAGESW = 0;
+
+	if (P0_ICEN & BIT(1))
+		p6_changed = 1;
+	
+	// clear input change flags
+	P0_ICEN = BIT(5);
+
+	PAGESW = saved_page;
+}
+
+// we use this interrupt as a scheduling tick (wakeup from sleep)
+
+void timer1_interupt(void) __interrupt(IRQ_TIMER1)
+{
+	run_tasks = 1;
+
+	// 20 ms
+	T1_SET_TIMEOUT(40000);
+
+	TF1 = 0;
 }
 
 // Keyboard has 12 columns and 6 rows directly connected to GPIOs.
@@ -111,14 +148,29 @@ void keyscan_idle(void)
 	P8 &= 0xfe;
 	P9 &= 0x1f;
 
+#if POLL_INPUT
+	// make all columns an input, hi-Z (saves power)
+	P0_P5M0 = ~0x00u;
+	P0_P8M0 |= ~0xfeu;
+	PAGESW = 1;
+	P1_P9M0 |= ~0x1fu;
+	ICIE = 0;
+	p6_changed = 0;
+#else
 	P0_P5M0 = 0x00;
 	P0_P8M0 &= 0xfe;
 	PAGESW = 1;
 	P1_P9M0 &= 0x1f;
 
-	// enable input change interrupt on port6 and clear the flag
+	// enable input change interrupt on port6 and clear the interrupt flag after
+	// things stabilize
+        delay_us(10);
+
+	PAGESW = 0;
+	p6_changed = 0;
 	P0_ICEN = BIT(5);
 	ICIE = 1;
+#endif
 }
 
 uint8_t keyscan_idle_is_pressed(void)
@@ -144,13 +196,16 @@ void keyscan_active(void)
 	P8 &= 0xfe;
 	P9 &= 0x1f;
 
+	// make all columns an input (hi-Z) in preparation for individual
+	// column scanning
 	P0_P5M0 = ~0x00u;
 	P0_P8M0 |= ~0xfeu;
 	PAGESW = 1;
 	P1_P9M0 |= ~0x1fu;
 }
 
-// XXX: we can debounce in the scan function too (3us?)
+// XXX: do we need to debounce in the scan function?
+// XXX: it looks like that there should be no bouncing going on mechanically
 
 // 12 byte storage required
 uint8_t keyscan_scan(uint8_t* res)
@@ -166,7 +221,7 @@ uint8_t keyscan_scan(uint8_t* res)
 	PAGESW = 1;
 	for (pin = 5; pin <= 7; pin++) {
 		P1_P9M0 &= ~BIT(pin);
-                delay_us(10);
+                delay_us(3);
                 row = ~P6 & 0x3f;
                 mask |= row;
 		*res++ = row;
@@ -176,7 +231,7 @@ uint8_t keyscan_scan(uint8_t* res)
 	PAGESW = 0;
 	for (pin = 0; pin <= 7; pin++) {
 		P0_P5M0 &= ~BIT(pin);
-                delay_us(10);
+                delay_us(3);
                 row = ~P6 & 0x3f;
                 mask |= row;
 		*res++ = row;
@@ -184,7 +239,7 @@ uint8_t keyscan_scan(uint8_t* res)
 	}
 
 	P0_P8M0 &= ~BIT(0);
-	delay_us(10);
+	delay_us(3);
         row = ~P6 & 0x3f;
         mask |= row;
 	*res++ = row;
@@ -308,18 +363,15 @@ void main(void)
 	// set both timers to 16-bit counter modes
 	TMOD = 0x11;
 
-	// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
-	//T0_SET_TIMEOUT(2000);
-
 	// enable both timers
 	TCON = 0x50;
 
 	// setup watchdog (timer base is 8ms, prescaler sets up timeout /128 = ~1s)
-	P0_WDTCR = 0x87; // enable watchdog ~1s
-	P0_WDTKEY = 0x4e; // reset watchdog
+//	P0_WDTCR = 0x87; // enable watchdog ~1s
+//	P0_WDTKEY = 0x4e; // reset watchdog
 
-//	P0_WDTCR = 0x07; // disable watchdog ~1s
-//	P0_WDTKEY = 0xb1; // disable watchdog
+	P0_WDTCR = 0x07; // disable watchdog ~1s
+	P0_WDTKEY = 0xb1; // disable watchdog
 
 	// power down unused peripherlas
 	P0_DEVPD1 |= BIT(6) | BIT(5) | BIT(3) | BIT(1); // PWM A, timer 3, SPI, LVD
@@ -342,13 +394,59 @@ void main(void)
 
 	i2c_slave_init();
 
-	// enable interrupts
-	EA = 1;
+	T1_SET_TIMEOUT(40000);
 
+	// enable interrupts
+	ET1 = 1;
+	EA = 1;
 	ext_int_deassert();
-	
+
+#if POLL_INPUT
+	keyscan_active();
+#else
 	keyscan_idle();
+#endif
+	uint8_t asserted = 0;
+	//uint16_t ticks = 0;
 	while (1) {
+		if (!run_tasks) {
+			// power down
+			//PCON |= BIT(1);
+
+			// go to idle CPU mode when there's nothing to do
+			//PCON |= BIT(0);
+			__asm__("nop");
+			continue;
+		}
+
+		//ticks++;
+		run_tasks = 0;
+
+#if POLL_INPUT
+		// every 10ms we will scan the keyboard keys state and check for changes
+		uint8_t keys[12];
+		uint8_t active_rows = keyscan_scan(keys);
+		if (active_rows) {
+			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
+			if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2)) {
+				EA = 0;
+				__asm__("mov r6,#0x5a");
+				__asm__("mov r7,#0xe7");
+				__asm__("ljmp 0x0118");
+			}
+
+			// check for changes
+			if (!memcmp(i2c_regs + 4, keys, 12))
+				continue;
+
+			// signal interrupt
+			memcpy(i2c_regs + 4, keys, 12);
+			ext_int_assert();
+			delay_us(100);
+			ext_int_deassert();
+		}
+
+#else
 		if (scan_active) {
 			uint8_t active_rows = keyscan_scan(i2c_regs + 4);
 			if (!active_rows) {
@@ -360,6 +458,7 @@ void main(void)
 				//__asm__("nop");
 			}
 			
+			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
 			if (i2c_regs[4 + 0] & BIT(2) && i2c_regs[4 + 2] & BIT(5) && i2c_regs[4 + 4] & BIT(2)) {
 				EA = 0;
 				__asm__("mov r6,#0x5a");
@@ -374,5 +473,6 @@ void main(void)
 			scan_active = 1;
 			keyscan_active();
 		}
+#endif
 	}
 }
