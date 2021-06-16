@@ -1,0 +1,44 @@
+Firmware
+--------
+
+- mask R5:C4 and R4:C2 because these are always on on my prototype
+  and prevent development of idle functionality
+  (Z key is stuck)
+
+   C1  2  3  4  5  6  7  8  9  10 11 12 
+R1  .  .  .  .  .  .  .  .  .  .  .  .
+R2  .  .  .  .  .  .  .  .  .  .  .  .
+R3  .  .  .  .  .  .  .  .  .  .  .  .
+R4  .  X  .  .  .  .  .  .  .  .  .  .
+R5  .  .  .  X  .  .  .  .  .  .  .  .
+R6  .  .  .  .  .  .  .  .  .  .  .  .
+
+- sleep when no key is pressed and wakeup using pin change interrupt
+  on P6 port
+
+- wakeup on I2C activity only happens on device address match, so
+  we can only sleep again after the entire transfer completes (how
+  to detect that though?)
+
+Userspace input device daemon
+-----------------------------
+
+- allow to read keymap config from a file instead of compiling it in
+
+- improve combo key handling
+  - sticky keys entry mode?
+
+- add various modal modes:
+  - show modal hints on the display 
+    - write to linux console framebuffer directly
+    - run a generic process/script (eg. to show mode in i3 status bar)
+
+Modes:
+
+- navigation mode arrows work as arrows without holding Fn key, holding
+  Fn key inverts the meaning to primary (so Fn+Up types a 'dot')
+- sticky Fn mode (all keys act as if Fn is being held)
+- sticky keys mode (build a multi-key shortcut gradually, without having to
+  hold multiple keys at once)
+- ???
+
