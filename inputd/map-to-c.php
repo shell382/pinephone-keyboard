@@ -21,7 +21,7 @@
  */
 
 $pmap = file_get_contents("physical-map.txt");
-$kmap = file_get_contents("factory-keymap.txt");
+$kmap = file_get_contents($argv[1]);
 
 // high nibble = row, low nibble col
 $el_phys_map = [];
