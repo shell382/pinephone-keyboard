@@ -20,6 +20,12 @@ R6  .  .  .  .  .  .  .  .  .  .  .  .
   we can only sleep again after the entire transfer completes (how
   to detect that though?)
 
+USB Flashing Tool
+-----------------
+
+- investigate reason for URB errors/empty (in command status INT transfer)
+
+
 Userspace input device daemon
 -----------------------------
 
