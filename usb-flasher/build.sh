@@ -2,4 +2,5 @@
 
 set -e
 
-gcc -o kbprog-usb kbprog-usb.c
+gcc -o ppkb-flasher flasher.c
+gcc -o ppkb-debugger debugger.c
