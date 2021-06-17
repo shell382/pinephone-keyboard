@@ -282,6 +282,9 @@ void bootloader_command(uint8_t req[8])
 	ret = ioctl(bootloader_fd, USBDEVFS_REAPURB, &reaped_urb);
 	syscall_error(ret < 0, "USBDEVFS_REAPURB failed");
 
+	if (urb.status != 0)
+		error("URB failed with status=%s (%d)", strerror(urb.status), urb.status);
+
 	debug("CMD:");
 	for (int i = 0; i < urb.actual_length; i++)
 		debug(" %02hhx", req[i]);
@@ -306,6 +309,11 @@ void bootloader_status(uint8_t res[4])
 
 	ret = ioctl(bootloader_fd, USBDEVFS_REAPURB, &reaped_urb);
 	syscall_error(ret < 0, "USBDEVFS_REAPURB failed");
+	
+	if (urb.status != 0)
+		error("URB failed with status=%s (%d)", strerror(urb.status), urb.status);
+	if (urb.actual_length != 4)
+		error("Status response too short, must be 4 bytes, got %d", urb.actual_length);
 
 	debug("RES:");
 	for (int i = 0; i < urb.actual_length; i++)
@@ -387,6 +395,11 @@ int bootloader_read_data(uint8_t res[64])
 		debug(" %02hhx", res[i]);
 	debug("\n");
 
+	if (urb.status != 0)
+		error("URB failed with status=%s (%d)", strerror(urb.status), urb.status);
+	if (urb.actual_length != 64)
+		error("Data response too short, must be 64 bytes, got %d", urb.actual_length);
+
 	return urb.actual_length;
 }
 
@@ -409,6 +422,9 @@ void bootloader_write_data(uint8_t res[64])
 
 	ret = ioctl(bootloader_fd, USBDEVFS_REAPURB, &reaped_urb);
 	syscall_error(ret < 0, "USBDEVFS_REAPURB failed");
+
+	if (urb.status != 0)
+		error("URB failed with status=%s (%d)", strerror(urb.status), urb.status);
 
 	debug("DATA:");
 	for (int i = 0; i < urb.actual_length; i++)
