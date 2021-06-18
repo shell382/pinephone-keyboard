@@ -1,0 +1,49 @@
+Flashing tool from usb-flasher/ directory can be used to flash the
+firmware over USB.
+
+For example to build and flash your own firmware you could run these
+commands:
+
+   # save the original firmware in case you want to restore it
+
+   ./usb-flasher/ppkb-flasher info > saved-info.txt
+   ./usb-flasher/ppkb-flasher --rom-out saved-rom.bin read
+
+   # build the new firmware (you may need sdcc 4.1, older versions may
+   # miscompile the firmware)
+
+   (cd firmware && ./build.sh)
+
+   # flash the new firmware
+
+   ./usb-flasher/ppkb-flasher --rom-in firmware/build/fw.bin write reset
+
+
+Full help output
+----------------
+
+Usage: ppkb-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]
+                    [--help] [<read|write|info|reset>...]
+
+Options:
+  -i, --rom-in <path>   Specify path to binary file you want to flash.
+  -o, --rom-out <path>  Specify path where you want to store the contents
+                        of code ROM read from the device.
+  -s, --rom-size <size> Specify how many bytes of code rom to flash
+                        starting from offset 0x2000 in the rom file.
+  -v, --verbose         Show details of what's going on.
+  -h, --help            This help.
+
+Commands:
+  info      Display information about the firmware.
+  read      Read ROM from the device to --rom-out file.
+  write     Flash ROM file to the device from --rom-in.
+  reset     Perform software reset of the MCU.
+
+Format of the ROM files is a flat binary. Only the part of it starting
+from 0x2000 will be flashed. Use -s to specify how many bytes to write.
+
+Pinephone keyboard flashing tool 1.0
+Written by Ondrej Jirman <megi@xff.cz>, 2021
+Licensed under GPLv3, see https://xff.cz/git/pinephone-keyboard/ for
+more information.
