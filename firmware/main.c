@@ -61,7 +61,7 @@ void pinchange_interupt(void) __interrupt(IRQ_PINCHANGE)
 
 	if (P0_ICEN & BIT(1))
 		p6_changed = 1;
-	
+
 	// clear input change flags
 	P0_ICEN = BIT(5);
 
@@ -79,6 +79,8 @@ void timer1_interupt(void) __interrupt(IRQ_TIMER1)
 
 	TF1 = 0;
 }
+
+// {{{ Key scanning
 
 // Keyboard has 12 columns and 6 rows directly connected to GPIOs.
 //
@@ -262,6 +264,9 @@ void ext_int_deassert(void)
 	P1_P9M0 |= BIT(0);
 }
 
+// }}}
+// {{{ I2C
+
 #define I2C_N_REGS 16
 
 static uint8_t i2c_transfer = 0x00;
@@ -274,7 +279,7 @@ static uint8_t i2c_cmd_len = 0;
 //XXX: we need this to be able to determine when it's safe to go back to sleep/power down
 
 void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
-{						    
+{
 	uint8_t saved_page = PAGESW;
 	uint8_t tmp;
 	PAGESW = 0;
@@ -289,7 +294,7 @@ void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 		P0_I2CBCR1 &= ~BIT(7); // clear data pending
 		P0_I2CBINT &= ~BIT(7);
 	}
-	
+
 	// handle RX
 	if (P0_I2CBINT & BIT(6)) {
 		tmp = P0_I2CBDB;
@@ -301,7 +306,7 @@ void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 		P0_I2CBCR1 &= ~BIT(7); // clear data pending
 		P0_I2CBINT &= ~BIT(6);
 	}
-	
+
 	// handle stop condition
 	if (P0_I2CBINT & BIT(4)) {
 		i2c_addr = 0;
@@ -312,7 +317,7 @@ void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 	PAGESW = saved_page;
 }
 
-// 
+//
 // Slave mode I2C for communication with the SoC
 //
 // - address is 0x15
@@ -380,7 +385,7 @@ void main(void)
 	P0_DEVPD1 |= BIT(6) | BIT(5) | BIT(3) | BIT(1); // PWM A, timer 3, SPI, LVD
 	P0_DEVPD2 |= BIT(6) | BIT(3) | BIT(0); // PWM C, PWM B, I2C A
 	P0_DEVPD3 |= BIT(2) | BIT(1) | BIT(0); // PWM E, PWM D, PWM F
-	
+
 	// keep UART, SPI, and I2C A in reset
 	//P0_PRST |= BIT(0) | BIT(2) | BIT(3);
 
@@ -427,30 +432,29 @@ void main(void)
 		run_tasks = 0;
 
 #if POLL_INPUT
-		// every 10ms we will scan the keyboard keys state and check for changes
+		// every 20ms we will scan the keyboard keys state and check for changes
 		uint8_t keys[12];
 		uint8_t active_rows = keyscan_scan(keys);
-		if (active_rows) {
-			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
-			if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2)) {
-				EA = 0;
-				__asm__("mov r6,#0x5a");
-				__asm__("mov r7,#0xe7");
-				__asm__("ljmp 0x0118");
-			}
 
-			// check for changes
-			if (!memcmp(i2c_regs + 4, keys, 12))
-				continue;
-
-			// signal interrupt
-			memcpy(i2c_regs + 4, keys, 12);
-			ext_int_assert();
-			delay_us(100);
-			ext_int_deassert();
+		// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
+		if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2)) {
+			EA = 0;
+			__asm__("mov r6,#0x5a");
+			__asm__("mov r7,#0xe7");
+			__asm__("ljmp 0x0118");
 		}
 
+		// check for changes
+		if (!memcmp(i2c_regs + 4, keys, 12))
+			continue;
+
+		// signal interrupt
+		memcpy(i2c_regs + 4, keys, 12);
+		ext_int_assert();
+		delay_us(100);
+		ext_int_deassert();
 #else
+		//XXX: not figured out yet, not tested, not working
 		if (scan_active) {
 			uint8_t active_rows = keyscan_scan(i2c_regs + 4);
 			if (!active_rows) {
@@ -461,7 +465,7 @@ void main(void)
 				//PCON |= BIT(1);
 				//__asm__("nop");
 			}
-			
+
 			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
 			if (i2c_regs[4 + 0] & BIT(2) && i2c_regs[4 + 2] & BIT(5) && i2c_regs[4 + 4] & BIT(2)) {
 				EA = 0;
@@ -472,7 +476,7 @@ void main(void)
 
 			continue;
 		}
-		
+
 		if (keyscan_idle_is_pressed()) {
 			scan_active = 1;
 			keyscan_active();
