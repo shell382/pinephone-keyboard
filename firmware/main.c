@@ -343,6 +343,503 @@ void i2c_slave_init(void)
 	P0_EIE3 |= BIT(5); // enable I2C B interrupt
 }
 
+// }}}
+// {{{ Debug logging
+
+static uint8_t __xdata log_buffer[1024];
+// end = start => empty buffer
+// end can never equal start on a filled buffer
+// end points to the last char if end != start
+static uint16_t log_start = 0;
+static uint16_t log_end = 0;
+
+static void putc(char c)
+{
+	log_end = (log_end + 1) % 1024;
+
+	if (log_end == log_start) {
+		// overflow, just push the start in front of us
+		log_start = (log_start + 1) % 1024;
+	}
+
+	log_buffer[log_end] = c;
+}
+
+static void puts(const char* s)
+{
+	while (*s)
+		putc(*s++);
+}
+
+static void put_uint(uint16_t value)
+{
+	char buf[6];
+	char *p = &buf[6 - 1];
+
+	*p = '\0';
+
+	if (!value)
+		*--p = '0';
+
+	while (value) {
+		*--p = '0' + value % 10;
+		value /= 10;
+	}
+
+	puts(p);
+}
+
+static void put_hex_n(uint8_t nibble)
+{
+	char c;
+
+	nibble &= 0xf;
+
+	if (nibble < 10)
+		c = '0' + nibble;
+	else
+		c = 'a' + (nibble - 10);
+
+	putc(c);
+}
+
+static void put_hex_b(uint8_t hex)
+{
+	put_hex_n(hex >> 4);
+	put_hex_n(hex);
+}
+
+static void put_hex_w(uint16_t hex)
+{
+	put_hex_b(hex >> 8);
+	put_hex_b(hex);
+}
+
+// }}}
+// {{{ USB
+
+enum {
+	UDC_EP_CONTROL = 0,
+	UDC_EP_ISO,
+	UDC_EP_BULK,
+	UDC_EP_INTERRUPT,
+};
+
+#define UDC_EP_CONF(conf, intf, alt, type) \
+        (conf << 6) | (intf << 4) | (alt << 2) | type
+#define UDC_EP_OUT_CONF(ep1, ep2, ep3, ep4) \
+	ep4 | (ep3 << 2) | (ep2 << 4) | (ep1 << 6)
+
+static const uint8_t udc_config[5] = {
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_OUT_CONF(UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT),
+};
+
+static void usb_disable(void)
+{
+	// reset phy/usb
+	PAGESW = 1;
+	P1_PHYTEST0 &= ~BIT(6); // phy disable
+	P1_UDCCTRL &= ~BIT(6); // udc disable
+}
+
+static void usb_init(void)
+{
+	PAGESW = 1;
+	P1_UDCCTRL |= BIT(6); // udc enable
+	// wait for UDC to complete initialization
+	while (!(P1_UDCCTRL & BIT(1)));
+	__asm__("nop");
+
+	// setup USB EP depths
+	P1_UDCEP1BUFDEPTH = 64 - 1;
+	P1_UDCEP2BUFDEPTH = 64 - 1;
+	P1_UDCEP3BUFDEPTH = 64 - 1;
+	P1_UDCEP4BUFDEPTH = 64 - 1;
+	__asm__("nop");
+	__asm__("nop");
+
+	// configure UDC
+	for (uint8_t i = 0; i < 4; i++) {
+		P1_UDCCFDATA = udc_config[i];
+
+		while (!(P1_UDCCFSTA & BIT(7)));
+		while (P1_UDCCFSTA & BIT(7));
+	}
+
+	P1_UDCCFDATA = udc_config[4];
+	while (!(P1_UDCCFSTA & BIT(6)));
+
+	// enable USB
+	P1_USBCTRL |= BIT(6);
+
+	P1_UDCINT0EN = 0;
+	P1_UDCINT1EN = 0;
+	P1_UDCINT2EN = 0;
+	P1_UDCEPCTRL = 0xf;
+	P1_UDCINT0STA = 0;
+	P1_UDCINT1STA = 0;
+	P1_UDCINT2STA = 0;
+
+	// enable phy
+	P1_PHYTEST0 |= BIT(5) | BIT(6);
+	__asm__("nop");
+	__asm__("nop");
+
+	PAGESW = 0;
+}
+
+#define USB_ID(w) (uint16_t)w & 0xff, ((uint16_t)w >> 8)
+#define USB_BCD(a, b) b, a
+
+static const uint8_t usb_desc_device[] ={
+	18,			// bLength
+	1,			// bDescriptorType
+	USB_BCD(0x2, 0x0),	// bcdUSB
+	0xff,			// bDeviceClass
+	0,			// bDeviceSubClass
+	0xff,			// bDeviceProtocol
+	64,			// bMaxPacketSize0
+	USB_ID(0x04f3),		// idVendor
+	USB_ID(0xb001),		// idProduct
+	USB_BCD(0x1, 0x0),	// bcdDevice
+	1,			// iManfacturer
+	2,			// iProduct
+	0,			// iSerialNumber
+	1,			// bNumConfgurations
+};
+
+#define USB_EP_OUT(addr, attr, maxsize, interval) \
+	7, 5, addr, attr, USB_ID(maxsize), interval
+#define USB_EP_IN(addr, attr, maxsize, interval) \
+	USB_EP_OUT((addr) | 0x80, attr, maxsize, interval)
+
+static const uint8_t usb_desc_config[] = {
+	9,				// bLength
+	2,				// bDescriptorType
+	USB_ID(sizeof(usb_desc_config)),// bTotolLength
+	1,				// bNumInterfaces
+	1,				// bConfigurationValue
+	0,				// iConfiguration string index
+	BIT(7) // must be set           // bmAttributes
+	| BIT(6) // self power
+	| BIT(5) // remote wakeup
+	,
+	100,				// bMaxPower
+
+	// Interface 0
+	9,				// bLength
+	4,				// bDescriptorType
+	0,				// bInterfaceNumber
+	0,				// bAlternateSetting
+	4,				// bNumEndpoints
+	0xff,				// bInterfaceClass
+	0,				// bInterfaceSubClass
+	0xff,				// bInterfaceProtocol
+	0,				// iInterface
+
+	USB_EP_OUT(1, 3, 64, 1), // request
+	USB_EP_IN(2, 3, 64, 1),  // response
+	USB_EP_IN(3, 3, 64, 1), // debug logging output
+	USB_EP_IN(4, 3, 64, 1), // key status changes
+};
+
+static const uint8_t usb_string_lang[] = {
+	4, 3,
+	USB_ID(0x0409),
+};
+
+static const uint8_t usb_string_manufacturer[] = {
+	4 * 2 + 2,
+	3,
+
+	'm', 0,
+	'e', 0,
+	'g', 0,
+	'i', 0,
+};
+
+static const uint8_t usb_string_product[] = {
+	5 * 2 + 2,
+	3,
+
+	'd', 0,
+	'e', 0,
+	'b', 0,
+	'u', 0,
+	'g', 0,
+};
+
+static const uint8_t * const usb_strings[] = {
+	usb_string_lang,
+	usb_string_manufacturer,
+	usb_string_product,
+};
+
+static uint16_t usb_ep0_in_remaining;
+static uint8_t const*  usb_ep0_in_ptr;
+static uint8_t usb_command_status = 0;
+static uint8_t usb_key_change = 0;
+static uint8_t usb_command[8];
+static uint8_t usb_response[8];
+
+static void usb_tasks(void)
+{
+	uint8_t buf[8];
+
+	PAGESW = 1;
+
+	// handle reset request
+	if (P1_UDCINT0STA & BIT(5)) {
+		P1_USBCTRL |= BIT(5);
+		P1_USBCTRL &= ~BIT(5);
+
+		// clear EP0-3 buffers
+		P1_UDCEPBUF0CTRL |= 0x55u;
+		P1_UDCEPBUF0CTRL &= ~0x55u;
+		// clear EP4
+		P1_UDCEPBUF1CTRL |= BIT(0);
+		P1_UDCEPBUF1CTRL &= ~BIT(0);
+
+		// clear EP0 / EP1 in buffers
+		P1_UDCBUFSTA &= ~(BIT(0) | BIT(1));
+
+		//XXX: what about others?
+                //XXX: reset software variables...
+
+		puts("usb reset int\n");
+
+		// ack reset request
+		P1_UDCINT0STA &= ~BIT(5);
+	}
+
+	// ep0 setup request received
+	if (P1_UDCINT0STA & BIT(1)) {
+		// buf: bReqType bReq wVal(l/h) wIndex wLength
+		for (uint8_t i = 0; i < 8; i++)
+			buf[i] = P1_UDCEP0BUFDATA;
+
+		// how much data to send to ep0 in
+		usb_ep0_in_remaining = (uint16_t)((buf[7] << 8) | buf[6]);
+		uint16_t in0_len = 0;
+
+		puts("ep0 setup: ");
+		put_hex_b(buf[0]);
+		put_hex_b(buf[1]);
+		put_hex_b(buf[2]);
+		put_hex_b(buf[3]);
+		putc('\n');
+
+		// standard commands
+		if (buf[0] == 0x80) {
+			// GET_DESCRIPTOR
+                        if (buf[1] == 0x06) {
+                                if (buf[3] == 1) {
+					// device desc: 80 06 00 01 00 00
+					if (buf[2] == 0) {
+						usb_ep0_in_ptr = usb_desc_device;
+						in0_len = sizeof(usb_desc_device);
+						goto ack_ep0_setup;
+					}
+				} else if (buf[3] == 2) {
+					// cfg desc: 80 06 00 02 00 00
+					if (buf[2] == 0) {
+						usb_ep0_in_ptr = usb_desc_config;
+						in0_len = sizeof(usb_desc_config);
+						goto ack_ep0_setup;
+					}
+				} else if (buf[3] == 3) {
+					// string desc: 80 06 str_index 03 00 00
+					if (buf[2] < sizeof(usb_strings) / sizeof(usb_strings[0])) {
+						usb_ep0_in_ptr = usb_strings[buf[2]];
+						in0_len = usb_ep0_in_ptr[0];
+						goto ack_ep0_setup;
+					}
+				}
+			}
+		}
+
+		usb_ep0_in_remaining = 0;
+                P1_UDCCTRL |= BIT(4); // stall control endpoint req
+
+ack_ep0_setup:
+		if (in0_len < usb_ep0_in_remaining)
+			usb_ep0_in_remaining = in0_len;
+
+		// ack
+		P1_UDCINT0STA &= ~BIT(1);
+	}
+
+	// USB host initiated EP0 IN transfer
+	if (P1_UDCINT1STA & BIT(0)) {
+		// check if we're ready to send to ep0
+		if (!(P1_UDCEPBUF0CTRL & BIT(1))) {
+			puts("ep0 in int ack\n");
+
+			// if ep0 in buffer not empty, clear it first
+			if (!(P1_UDCBUFSTA & BIT(0))) {
+				// clear ep0 buffer
+				P1_UDCEPBUF0CTRL |= BIT(0);
+				P1_UDCEPBUF0CTRL &= ~BIT(0);
+			}
+
+			for (uint8_t n = 0; n < 64; n++) {
+				// push data to EP0 in (max 8 bytes)
+				if (usb_ep0_in_remaining > 0) {
+					usb_ep0_in_remaining--;
+					P1_UDCEP0BUFDATA = *usb_ep0_in_ptr++;
+				} else {
+					break;
+				}
+			}
+
+			// confirm sending data
+			P1_UDCEPBUF0CTRL |= BIT(1);
+			// ack interrupt
+			P1_UDCINT1STA &= ~BIT(0);
+		}
+	}
+
+	// data received on ep0 out
+	if (P1_UDCINT1STA & BIT(1)) {
+		// we don't handle any control transfers that send us data
+
+		// reset ep0 buf
+		P1_UDCEPBUF0CTRL |= BIT(0);
+		P1_UDCEPBUF0CTRL &= ~BIT(0);
+
+		// ack interrupt
+		P1_UDCINT1STA &= ~BIT(1);
+	}
+
+	// does not happen, EP1 IN is not configured on host
+	if (P1_UDCINT1STA & BIT(2)) {
+		puts("ep1 in int ack\n");
+		P1_UDCINT1STA &= ~BIT(2);
+	}
+
+	// data received on ep1 out (command endpoint)
+	if (P1_UDCINT1STA & BIT(3)) {
+		// read data from ep1 fifo
+		uint8_t bytes = P1_UDCEP1DATAOUTCNT + 1;
+
+		puts("usb cmd len=");
+		put_uint(bytes);
+		putc(' ');
+		for (uint8_t i = 0; i < 8; i++) {
+			usb_command[i] = P1_UDCEP1BUFDATA;
+
+			putc(' ');
+			put_hex_b(usb_command[i]);
+		}
+		usb_command_status = 1;
+		putc('\n');
+
+		P1_UDCINT1STA &= ~BIT(3);
+
+		// clear the rest
+		P1_UDCEPBUF0CTRL |= BIT(2);
+		P1_UDCEPBUF0CTRL &= ~BIT(2);
+
+		//do {
+			//P1_USBCTRL |= BIT(6);
+		//} while(!(P1_USBCTRL & BIT(6)));
+	}
+
+	// process USB commands
+        if (usb_command_status == 1) {
+		// what command the response is for
+		usb_response[0] = usb_command[0];
+		// success = 0, error code otherwise
+		usb_response[1] = 0x00;
+
+                if (usb_command[0] == 0x01) {
+			// bootloader mode
+			EA = 0;
+			__asm__("mov r6,#0x5a");
+			__asm__("mov r7,#0xe7");
+			__asm__("ljmp 0x0118");
+		} else {
+			// command unknown
+			usb_response[1] = 1;
+		}
+
+		usb_command_status = 2;
+	}
+
+	// USB host initiated EP2 IN transfer
+	if (P1_UDCINT1STA & BIT(4)) {
+		// send out response to last command on ep2 in
+		if (usb_command_status == 2 && !(P1_UDCEPBUF0CTRL & BIT(5))) {
+			P1_UDCEP2DATAINCNT = 8 - 1; // how much bytes to send
+
+			puts("ep2 in response\n");
+
+			for (uint8_t i = 0; i < 8; i++)
+				P1_UDCEP2BUFDATA = usb_response[i];
+
+			P1_UDCEPBUF0CTRL |= BIT(5); // EP2 data ready
+			usb_command_status = 0;
+		}
+
+		// ack
+		P1_UDCINT1STA &= ~BIT(4);
+	}
+
+	// USB host initiated EP3 IN transfer
+	if (P1_UDCINT1STA & BIT(6)) {
+		// push printf debug buffer to ep3 in
+		if (!(P1_UDCEPBUF0CTRL & BIT(7)) && log_start != log_end) {
+	                uint8_t cnt = 0;
+
+			while (cnt < 64 && log_start != log_end) {
+				log_start = (log_start + 1) % 1024;
+				P1_UDCEP3BUFDATA = log_buffer[log_start]; // push data to fifo
+				cnt++;
+			}
+
+			P1_UDCEP3DATAINCNT = cnt - 1;
+			P1_UDCEPBUF0CTRL |= BIT(7); // EP3 data ready
+		}
+
+		// ack
+		P1_UDCINT1STA &= ~BIT(6);
+	}
+
+	// USB host initiated EP4 IN transfer
+	if (P1_UDCINT2STA & BIT(2)) {
+		// push key change events to ep4 in
+		if (!(P1_UDCEPBUF1CTRL & BIT(1)) && usb_key_change) {
+			puts("key change sent\n");
+
+			for (uint8_t i = 0; i < 12; i++)
+				P1_UDCEP4BUFDATA = i2c_regs[i + 4];
+
+			P1_UDCEP4DATAINCNT = 12 - 1;
+			P1_UDCEPBUF1CTRL |= BIT(1); // EP4 data ready
+			usb_key_change = 0;
+		}
+
+		// ack
+		P1_UDCINT2STA &= ~BIT(2);
+	}
+
+	// suspend request
+	if (P1_UDCINT0STA & BIT(6)) {
+		puts("suspend int ack\n");
+		// ack
+		P1_UDCINT0STA &= ~BIT(6);
+
+                //XXX: handle suspend properly
+
+		// suspend UDC
+		P1_UDCCTRL &= ~BIT(5);
+	}
+}
+
 void main(void)
 {
 	uint8_t scan_active = 0;
@@ -398,16 +895,20 @@ void main(void)
 	P1_PHCON2 = 0x00;
 
 	// enable auto-tuning internal RC oscillator based on USB SOF packets
-	//P1_IRCCTRL &= ~BIT(1); // disable manual trim
+	P1_IRCCTRL &= ~BIT(1); // disable manual trim
 
 	i2c_slave_init();
 
 	T1_SET_TIMEOUT(40000);
 
+	usb_disable();
+
 	// enable interrupts
 	ET1 = 1;
 	EA = 1;
 	ext_int_deassert();
+
+	puts("Booted kb 0.1\n");
 
 #if POLL_INPUT
 	keyscan_active();
@@ -415,8 +916,12 @@ void main(void)
 	keyscan_idle();
 #endif
 	uint8_t asserted = 0;
-	//uint16_t ticks = 0;
+	uint8_t usb_initialized = 0;
+	uint16_t ticks = 0;
 	while (1) {
+		if (usb_initialized)
+			usb_tasks();
+
 		if (!run_tasks) {
 			// power down (timers don't work in power-down)
 			//PCON |= BIT(1);
@@ -428,8 +933,14 @@ void main(void)
 			continue;
 		}
 
-		//ticks++;
+		ticks++;
 		run_tasks = 0;
+
+		// usb init needs to run after 500ms
+		if (ticks > 500 / 20 && !usb_initialized) {
+			usb_init();
+			usb_initialized = 1;
+		}
 
 #if POLL_INPUT
 		// every 20ms we will scan the keyboard keys state and check for changes
@@ -453,6 +964,7 @@ void main(void)
 		ext_int_assert();
 		delay_us(100);
 		ext_int_deassert();
+		usb_key_change = 1;
 #else
 		//XXX: not figured out yet, not tested, not working
 		if (scan_active) {
