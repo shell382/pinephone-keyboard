@@ -4,6 +4,10 @@ See demo video https://megous.com/dl/tmp/kb.mp4 and some technical overview http
 
 You can support the project via donations at https://xnux.eu/contribute.html#toc-donations
 
+See also Samuel's kernel driver:
+
+  https://github.com/smaeul/linux/commit/61945cfd2abc09f8e9498b90895dd40362412104
+
 Enjoy!
 
 	~megi
