@@ -23,7 +23,12 @@ Registers
 0x00: Device ID1 (0x4b)
 0x01: Device ID2 (0x42)
 0x02: Firmware revision
-0x03: System configuration
+0x03: Firmware features
+   bit 0: USB debugger
+   bit 1: Flashing mode
+   bit 2: Self-test features
+   
+0x04: System configuration
    bit 0: disable KB scanning (1: scanning disabled, 0: scanning enabled)
    bit 1: poll mode
           1: don't rely on row change detection, poll the matrix periodically
@@ -34,13 +39,28 @@ Registers
           1: enabled
           0: disabled
 
+0x06: System command
+      Writing values into this register causes the firmware to perform
+      certain one-shot actions:
+
+      0x52 ('R') - reset the MCU
+      0x63 ('c') - run a column self-test
+      0x72 ('r') - run a row self-test
+                   (results for both tests will be stored in test-result
+                    registers)
+
 0x10: Keyboard data for column 1
 ...
-0x0b: Keyboard data for column 12
-0x0c: CRC8 of keyboard data from 0x10-0x0b
+0x1b: Keyboard data for column 12
+0x1c: CRC8 of keyboard data from 0x10-0x0b
 
 0x20: Writing value 0x53 ('S') to this register stops the main app from
       jumping to the user app.
+
+0x50: Self-test results (32 bytes)
+...
+0x6f:
+      
 
 0x70: Flashing mode unlock key
       (writing 0x46 to this register unlocks the flashing mode.)
