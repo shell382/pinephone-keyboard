@@ -42,21 +42,37 @@ Registers
 
 0x70: Flashing mode unlock key
       (writing 0x46 to this register unlocks the flashing mode.)
+
 0x71: Flashing control
       Writing various commands to this register makes the MCU execute them,
       if the MCU is not executing the previous command. Available commands:
+      
       0x52 - read a block of data from code ROM
       0x57 - write a block of data to code ROM
       0x45 - erase the code rom memory block (128B)
       0x43 - confirm the validity of the firmware and enable redirection
              to it from the main app (this redirection is automatically
              disabled before executing the 0x57 command)
+      
+      This register will ignore further commands as long as the last operation
+      is still in progress. This register will contain the code of the
+      currently executed operation, and will be cleared after the operation
+      finishes. Completion is also signalled by pulsing the INT pin shortly.
+      
+      If the operation fails, this register will contain value 0xff. If it
+      succeeds it will contain value 0x00.
+      
 0x7d: target address low byte
 0x7e: target address high byte
+
 0x7f: CRC8 calculated for the 128B block of data from 0x80-0xff
       - this must be written by the user when preparing data for write
-        operation
-      - this is update by the MCU after reading the data from flash memory
+        operation, MCU checks the CRC8 of the data and compares it against
+        the value in this register before starting the execution of
+        0x57 command
+
+      - this is updated by the MCU after reading the data from flash memory
+
 0x80: 128B block of EEPROM data (either read from code memory or to be
 ...   written)
 0xff
