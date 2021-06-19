@@ -39,6 +39,8 @@ Registers
 0x0b: Keyboard data for column 12
 0x0c: CRC8 of keyboard data from 0x10-0x0b
 
+0x20: Writing value 0x53 ('S') to this register stops the main app from
+      jumping to the user app.
 
 0x70: Flashing mode unlock key
       (writing 0x46 to this register unlocks the flashing mode.)
@@ -76,3 +78,47 @@ Registers
 0x80: 128B block of EEPROM data (either read from code memory or to be
 ...   written)
 0xff
+
+
+Usage
+-----
+
+User can modify register 0x03 to choose how the firmware should operate.
+The settings are not persistent across resets.
+
+To read the keyboard matrix status, the user can perform a 13B read transaction
+from address 0x10 and calculate CRC8 on the first 12 bytes and compare it with
+the 13th byte.
+
+Bit 0 corresponds to row 1, bit 5 to row 6, bits 6 and 7 are always 0.
+
+
+Flashing
+--------
+
+The firmware is split into 3 parts:
+
+0x0000 - 0x2000: Stock USB bootloader
+0x2000 - 0x4000: Stock FOSS firmware (flashable from stock bootloader)
+0x4000 - 0x8000: User app (optional, flashable over I2C from stock FOSS firmware)
+
+When the stock FOSS firmware runs after MCU powerup or reset, it will wait for 200ms
+and listen on I2C. If 0x53 is not written to register 0x20 during that time and
+the user's app is flashed and commited, it will redirect interrupt vectors to
+0x4000+offset and jump to 0x4000, which will start executing user's app.
+
+User app should always return value 0x00 when reading register 0x20, to make it
+easy to distinguish that the "stay in stock app" command succeeded.
+
+Flashing steps:
+
+1) Unlock by writing 0x46 to register 0x70
+2) Write address to 0x7d/0x7e
+3) Write data to 0x80-0xff and CRC8 to 0x7f
+4) Write command 0x57 to 0x71
+5) Poll 0x71 for result (either 0x00 or 0xff)
+   ... repeat 2-5 for all memory locations to be flashed
+6) Write command 0x43 to reg 0x71
+7) Wait for success
+
+Reset the MCU.
