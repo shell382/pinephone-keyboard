@@ -341,51 +341,113 @@ void ext_int_deassert(void)
 
 #define I2C_N_REGS 16
 
-static uint8_t i2c_transfer = 0x00;
-static uint8_t i2c_addr = 0;
-static uint8_t i2c_regs[I2C_N_REGS] = {0xaa, 0x55};
-static uint8_t i2c_cmd[I2C_N_REGS];
-static uint8_t i2c_cmd_len = 0;
+static uint8_t i2c_rx_cnt = 0;
+static uint8_t i2c_tx_cnt = 0;
+static uint8_t i2c_tx_buf[I2C_N_REGS] = {0xaa, 0x55};
+static uint8_t i2c_rx_buf[I2C_N_REGS];
 
-//XXX: how to determine end of I2C transaction from the interrupt?
-//XXX: we need this to be able to determine when it's safe to go back to sleep/power down
+/*
+ * Host write transaction: sending 01 02 03 04 to device at 0x15 (0x2a == 0x15 << 1)
+ *
+ * int=60 CR1=8c CR2=af DATA_PRE=2a rx
+ * int=60 CR1=8e CR2=af DATA_PRE=01 rx
+ * int=60 CR1=8e CR2=af DATA_PRE=02 rx
+ * int=60 CR1=8e CR2=af DATA_PRE=03 rx
+ * int=60 CR1=8e CR2=af DATA_PRE=04 rx
+ * int=70 CR1=0c CR2=2f DATA_PRE=04 stop
+ *
+ * Host read transaction: receiving 4 bytes
+ *
+ * int=a0 CR1=8d CR2=af tx
+ * int=a0 CR1=8d CR2=af tx
+ * int=a0 CR1=8d CR2=af tx
+ * int=a0 CR1=89 CR2=af tx
+ * int=b0 CR1=08 CR2=2f stop
+ *
+ * CR1:
+ * 7: STROBE/PEND   (RX/TX: not set on stop IRQ, even though RXSF/TXSF is also set)
+ * 3: SAR_EMPTY     (RX/TX: always set)
+ * 2: ACK           (RX: always set)
+ *                  (TX: set on all except on the last TX byte)
+ * 1: FULL          (RX: not set on first RX byte, which is a device address)
+ *                  (TX: always not set)
+ * 0: EMPTY         (RX: always not set)
+ *                  (TX: alwyas set except after stop IRQ)
+ *
+ * CR2:
+ * 7: I2C busy flag (RX/TX: not set after stop IRQ)
+ * 6: ?
+ * 5: SW_RESET
+ * 4: BBF
+ *
+ * I2CBINT:
+ * 7: TXSF
+ * 6: RXSF
+ * 5: STP_IEN
+ * 4: STOPF
+ *
+ * Powerdown is only possible after the stop bit. Wakeup only happens
+ * on address match.
+ */
+
+#define I2C_ADDR 0x15
+#define I2C_DEBUG 0
 
 void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
 {
 	uint8_t saved_page = PAGESW;
-	uint8_t tmp;
 	PAGESW = 0;
+
+#if I2C_DEBUG
+	puts("i2cb int=");
+	put_hex_b(P0_I2CBINT);
+	puts(" CR1=");
+	put_hex_b(P0_I2CBCR1);
+	puts(" CR2=");
+	put_hex_b(P0_I2CBCR2);
+	puts("\n");
+#endif
+
+	// handle stop condition
+	if (P0_I2CBINT & BIT(4)) {
+		if (i2c_rx_cnt) {
+			//XXX: process received data
+
+			puts("I2C RX: ");
+			for (uint8_t i = 0; i < i2c_rx_cnt; i++)
+				put_hex_b(i2c_rx_buf[i]);
+			puts("\n");
+		}
+
+		i2c_tx_cnt = 0;
+		i2c_rx_cnt = 0;
+		goto out_ack;
+	}
 
 	// handle TX
 	if (P0_I2CBINT & BIT(7)) {
-		if (i2c_addr < 16)
-			P0_I2CBDB = i2c_regs[i2c_addr++];
+		if (i2c_tx_cnt < I2C_N_REGS)
+			P0_I2CBDB = i2c_tx_buf[i2c_tx_cnt++];
 		else
 			P0_I2CBDB = 0xff;
 
-		P0_I2CBCR1 &= ~BIT(7); // clear data pending
-		P0_I2CBINT &= ~BIT(7);
+		goto out_ack;
 	}
 
 	// handle RX
 	if (P0_I2CBINT & BIT(6)) {
-		tmp = P0_I2CBDB;
-		if (i2c_cmd_len < 16)
-			i2c_cmd[i2c_cmd_len++] = tmp;
+		uint8_t empty = P0_I2CBCR1 & BIT(1);
+		uint8_t tmp = P0_I2CBDB;
 
-		PAGESW = 0;
+		if (empty && i2c_rx_cnt < I2C_N_REGS)
+			i2c_rx_buf[i2c_rx_cnt++] = tmp;
 
-		P0_I2CBCR1 &= ~BIT(7); // clear data pending
-		P0_I2CBINT &= ~BIT(6);
+		goto out_ack;
 	}
 
-	// handle stop condition
-	if (P0_I2CBINT & BIT(4)) {
-		i2c_addr = 0;
-		i2c_cmd_len = 0;
-		P0_I2CBINT &= ~BIT(4);
-	}
-
+out_ack:
+	P0_I2CBINT &= ~(BIT(4) | BIT(7) | BIT(6));
+	P0_I2CBCR1 &= ~BIT(7); // clear data pending
 	PAGESW = saved_page;
 }
 
@@ -409,7 +471,7 @@ void i2c_slave_init(void)
 
 	// setup I2C address
 	P0_I2CBDAH = 0x00;
-	P0_I2CBDAL = 0x15;
+	P0_I2CBDAL = I2C_ADDR;
 
 	P0_I2CBINT = BIT(5); // enable I2C B stop interrupt
 	P0_EIE3 |= BIT(5); // enable I2C B interrupt
@@ -799,7 +861,7 @@ ack_ep0_setup:
 		// push key change events to ep4 in
 		if (!(P1_UDCEPBUF1CTRL & BIT(1)) && usb_key_change) {
 			for (uint8_t i = 0; i < 12; i++)
-				P1_UDCEP4BUFDATA = i2c_regs[i + 4];
+				P1_UDCEP4BUFDATA = i2c_tx_buf[i + 4];
 
 			P1_UDCEP4DATAINCNT = 12 - 1;
 			P1_UDCEPBUF1CTRL |= BIT(1); // EP4 data ready
@@ -942,11 +1004,11 @@ void main(void)
 		}
 
 		// check for changes
-		if (!memcmp(i2c_regs + 4, keys, 12))
+		if (!memcmp(i2c_tx_buf + 4, keys, 12))
 			continue;
 
 		// signal interrupt
-		memcpy(i2c_regs + 4, keys, 12);
+		memcpy(i2c_tx_buf + 4, keys, 12);
 		ext_int_assert();
 		delay_us(100);
 		ext_int_deassert();
@@ -954,7 +1016,7 @@ void main(void)
 #else
 		//XXX: not figured out yet, not tested, not working
 		if (scan_active) {
-			uint8_t active_rows = keyscan_scan(i2c_regs + 4);
+			uint8_t active_rows = keyscan_scan(i2c_tx_buf + 4);
 			if (!active_rows) {
 				scan_active = 0;
 				keyscan_idle();
@@ -965,7 +1027,7 @@ void main(void)
 			}
 
 			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
-			if (i2c_regs[4 + 0] & BIT(2) && i2c_regs[4 + 2] & BIT(5) && i2c_regs[4 + 4] & BIT(2)) {
+			if (i2c_tx_buf[4 + 0] & BIT(2) && i2c_tx_buf[4 + 2] & BIT(5) && i2c_tx_buf[4 + 4] & BIT(2)) {
 				EA = 0;
 				__asm__("mov r6,#0x5a");
 				__asm__("mov r7,#0xe7");
