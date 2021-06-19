@@ -80,6 +80,78 @@ void timer1_interupt(void) __interrupt(IRQ_TIMER1)
 	TF1 = 0;
 }
 
+// {{{ Debug logging
+
+static uint8_t __xdata log_buffer[1024];
+// end = start => empty buffer
+// end can never equal start on a filled buffer
+// end points to the last char if end != start
+static uint16_t log_start = 0;
+static uint16_t log_end = 0;
+
+static void putc(char c)
+{
+	log_end = (log_end + 1) % 1024;
+
+	if (log_end == log_start) {
+		// overflow, just push the start in front of us
+		log_start = (log_start + 1) % 1024;
+	}
+
+	log_buffer[log_end] = c;
+}
+
+static void puts(const char* s)
+{
+	while (*s)
+		putc(*s++);
+}
+
+static void put_uint(uint16_t value)
+{
+	char buf[6];
+	char *p = &buf[6 - 1];
+
+	*p = '\0';
+
+	if (!value)
+		*--p = '0';
+
+	while (value) {
+		*--p = '0' + value % 10;
+		value /= 10;
+	}
+
+	puts(p);
+}
+
+static void put_hex_n(uint8_t nibble)
+{
+	char c;
+
+	nibble &= 0xf;
+
+	if (nibble < 10)
+		c = '0' + nibble;
+	else
+		c = 'a' + (nibble - 10);
+
+	putc(c);
+}
+
+static void put_hex_b(uint8_t hex)
+{
+	put_hex_n(hex >> 4);
+	put_hex_n(hex);
+}
+
+static void put_hex_w(uint16_t hex)
+{
+	put_hex_b(hex >> 8);
+	put_hex_b(hex);
+}
+
+// }}}
 // {{{ Key scanning
 
 // Keyboard has 12 columns and 6 rows directly connected to GPIOs.
@@ -344,78 +416,6 @@ void i2c_slave_init(void)
 }
 
 // }}}
-// {{{ Debug logging
-
-static uint8_t __xdata log_buffer[1024];
-// end = start => empty buffer
-// end can never equal start on a filled buffer
-// end points to the last char if end != start
-static uint16_t log_start = 0;
-static uint16_t log_end = 0;
-
-static void putc(char c)
-{
-	log_end = (log_end + 1) % 1024;
-
-	if (log_end == log_start) {
-		// overflow, just push the start in front of us
-		log_start = (log_start + 1) % 1024;
-	}
-
-	log_buffer[log_end] = c;
-}
-
-static void puts(const char* s)
-{
-	while (*s)
-		putc(*s++);
-}
-
-static void put_uint(uint16_t value)
-{
-	char buf[6];
-	char *p = &buf[6 - 1];
-
-	*p = '\0';
-
-	if (!value)
-		*--p = '0';
-
-	while (value) {
-		*--p = '0' + value % 10;
-		value /= 10;
-	}
-
-	puts(p);
-}
-
-static void put_hex_n(uint8_t nibble)
-{
-	char c;
-
-	nibble &= 0xf;
-
-	if (nibble < 10)
-		c = '0' + nibble;
-	else
-		c = 'a' + (nibble - 10);
-
-	putc(c);
-}
-
-static void put_hex_b(uint8_t hex)
-{
-	put_hex_n(hex >> 4);
-	put_hex_n(hex);
-}
-
-static void put_hex_w(uint16_t hex)
-{
-	put_hex_b(hex >> 8);
-	put_hex_b(hex);
-}
-
-// }}}
 // {{{ USB
 
 enum {
@@ -610,7 +610,9 @@ static void usb_tasks(void)
 		//XXX: what about others?
                 //XXX: reset software variables...
 
+		EA = 0;
 		puts("usb reset int\n");
+		EA = 1;
 
 		// ack reset request
 		P1_UDCINT0STA &= ~BIT(5);
@@ -625,13 +627,6 @@ static void usb_tasks(void)
 		// how much data to send to ep0 in
 		usb_ep0_in_remaining = (uint16_t)((buf[7] << 8) | buf[6]);
 		uint16_t in0_len = 0;
-
-		puts("ep0 setup: ");
-		put_hex_b(buf[0]);
-		put_hex_b(buf[1]);
-		put_hex_b(buf[2]);
-		put_hex_b(buf[3]);
-		putc('\n');
 
 		// standard commands
 		if (buf[0] == 0x80) {
@@ -677,8 +672,6 @@ ack_ep0_setup:
 	if (P1_UDCINT1STA & BIT(0)) {
 		// check if we're ready to send to ep0
 		if (!(P1_UDCEPBUF0CTRL & BIT(1))) {
-			puts("ep0 in int ack\n");
-
 			// if ep0 in buffer not empty, clear it first
 			if (!(P1_UDCBUFSTA & BIT(0))) {
 				// clear ep0 buffer
@@ -706,6 +699,9 @@ ack_ep0_setup:
 	// data received on ep0 out
 	if (P1_UDCINT1STA & BIT(1)) {
 		// we don't handle any control transfers that send us data
+		EA = 0;
+		puts("usb EP0 OUT int\n");
+		EA = 1;
 
 		// reset ep0 buf
 		P1_UDCEPBUF0CTRL |= BIT(0);
@@ -717,7 +713,6 @@ ack_ep0_setup:
 
 	// does not happen, EP1 IN is not configured on host
 	if (P1_UDCINT1STA & BIT(2)) {
-		puts("ep1 in int ack\n");
 		P1_UDCINT1STA &= ~BIT(2);
 	}
 
@@ -726,17 +721,9 @@ ack_ep0_setup:
 		// read data from ep1 fifo
 		uint8_t bytes = P1_UDCEP1DATAOUTCNT + 1;
 
-		puts("usb cmd len=");
-		put_uint(bytes);
-		putc(' ');
-		for (uint8_t i = 0; i < 8; i++) {
+		for (uint8_t i = 0; i < 8; i++)
 			usb_command[i] = P1_UDCEP1BUFDATA;
-
-			putc(' ');
-			put_hex_b(usb_command[i]);
-		}
 		usb_command_status = 1;
-		putc('\n');
 
 		P1_UDCINT1STA &= ~BIT(3);
 
@@ -776,8 +763,6 @@ ack_ep0_setup:
 		if (usb_command_status == 2 && !(P1_UDCEPBUF0CTRL & BIT(5))) {
 			P1_UDCEP2DATAINCNT = 8 - 1; // how much bytes to send
 
-			puts("ep2 in response\n");
-
 			for (uint8_t i = 0; i < 8; i++)
 				P1_UDCEP2BUFDATA = usb_response[i];
 
@@ -813,8 +798,6 @@ ack_ep0_setup:
 	if (P1_UDCINT2STA & BIT(2)) {
 		// push key change events to ep4 in
 		if (!(P1_UDCEPBUF1CTRL & BIT(1)) && usb_key_change) {
-			puts("key change sent\n");
-
 			for (uint8_t i = 0; i < 12; i++)
 				P1_UDCEP4BUFDATA = i2c_regs[i + 4];
 
@@ -829,7 +812,10 @@ ack_ep0_setup:
 
 	// suspend request
 	if (P1_UDCINT0STA & BIT(6)) {
-		puts("suspend int ack\n");
+		EA = 0;
+		puts("usb suspend int\n");
+		EA = 1;
+
 		// ack
 		P1_UDCINT0STA &= ~BIT(6);
 
@@ -897,6 +883,8 @@ void main(void)
 	// enable auto-tuning internal RC oscillator based on USB SOF packets
 	P1_IRCCTRL &= ~BIT(1); // disable manual trim
 
+	puts("ppkb firmware 0.1\n");
+
 	i2c_slave_init();
 
 	T1_SET_TIMEOUT(40000);
@@ -907,8 +895,6 @@ void main(void)
 	ET1 = 1;
 	EA = 1;
 	ext_int_deassert();
-
-	puts("Booted kb 0.1\n");
 
 #if POLL_INPUT
 	keyscan_active();
