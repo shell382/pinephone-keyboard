@@ -1,0 +1,62 @@
+I2C interface to the firmware
+-----------------------------
+
+To control the operation of the keyboard's firmware, the firmware
+exposes some "registers" that the user can read/write using the
+two kinds of I2C transfers.
+
+1) set values of consecutive block of registers starting from REG_ADDR:
+  
+  START TX(DEV_ADDR+WR REG_ADDR [REG_DATA REG+1_DATA REG+2_DATA ...]) STOP
+
+2) read values of consecutive block of registers starting from REG_ADDR:
+
+  START TX(DEV_ADDR+WR REG_ADDR) STOP
+  START TX(DEV_ADDR+RD) RX(REG_ADDR [REG_DATA REG+1_DATA REG+2_DATA ...]) STOP
+
+Device address is 0x15.
+
+
+Registers
+---------
+
+0x00: Device ID1 (0x4b)
+0x01: Device ID2 (0x42)
+0x02: Firmware revision
+0x03: System configuration
+   bit 0: disable KB scanning (1: scanning disabled, 0: scanning enabled)
+   bit 1: poll mode
+          1: don't rely on row change detection, poll the matrix periodically
+             (prevents MCU power down)
+          0: power down the MCU when no key is pressed, and rely on change
+             detection on row inupts to wake the MCU up
+   bit 2: enable USB debug interface
+          1: enabled
+          0: disabled
+
+0x10: Keyboard data for column 1
+...
+0x0b: Keyboard data for column 12
+0x0c: CRC8 of keyboard data from 0x10-0x0b
+
+
+0x70: Flashing mode unlock key
+      (writing 0x46 to this register unlocks the flashing mode.)
+0x71: Flashing control
+      Writing various commands to this register makes the MCU execute them,
+      if the MCU is not executing the previous command. Available commands:
+      0x52 - read a block of data from code ROM
+      0x57 - write a block of data to code ROM
+      0x45 - erase the code rom memory block (128B)
+      0x43 - confirm the validity of the firmware and enable redirection
+             to it from the main app (this redirection is automatically
+             disabled before executing the 0x57 command)
+0x7d: target address low byte
+0x7e: target address high byte
+0x7f: CRC8 calculated for the 128B block of data from 0x80-0xff
+      - this must be written by the user when preparing data for write
+        operation
+      - this is update by the MCU after reading the data from flash memory
+0x80: 128B block of EEPROM data (either read from code memory or to be
+...   written)
+0xff
