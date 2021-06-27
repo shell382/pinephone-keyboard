@@ -20,6 +20,8 @@
 #ifndef __EM85F684A_H__
 #define __EM85F684A_H__
 
+#ifndef __ASM_ONLY__
+
 __sfr __at(0x87) PCON;                // Power Control
 __sfr __at(0xc0) RSTSC;               // Reset Source
 __sfr __at(0xbf) P0_PRST;             // Peripheral Reset
@@ -105,11 +107,9 @@ __sfr __at(0xc4) P0_I2CADB;           // I2CA Data Buffer Register
 __sfr __at(0xc5) P0_I2CADAL;          // I2CA Device Address Register L
 __sfr __at(0xc6) P0_I2CADAH;          // I2CA Device Address Register H
 __sfr __at(0xc7) P0_I2CASF;           // I2CA status flag
-
 __sfr __at(0xcd) P0_DEVPD1;           // Peripheral power down
 __sfr __at(0xce) P0_DEVPD2;           // Peripheral power down
 __sfr __at(0xcf) P0_DEVPD3;           // Peripheral power down
-
 __sfr __at(0xd1) P0_SMBTO1;           // SMbus Time Out 1 Register
 __sfr __at(0xd2) P0_SMBTR1;           // SMbus Timer reload 1 Register
 __sfr __at(0xd3) P0_SMBTO2;           // SMbus Time Out 2 Register
@@ -273,19 +273,24 @@ __sbit __at(0xea) P92;
 __sbit __at(0xe9) P91;
 __sbit __at(0xe8) P90;
 
+#endif
+
 #define IRQ_EINT0      0  // External Interrupt 0
 #define IRQ_TIMER0     1  // Timer0 Overflow
 #define IRQ_EINT1      2  // External Interrupt 1
 #define IRQ_TIMER1     3  // Timer1 Overflow
 #define IRQ_UART0      4  // Serial Port 0
 #define IRQ_PINCHANGE  6  // PIN CHANGE Interrupt 0
+#define IRQ_LVD        7  // Low voltage detect Interrupt
 #define IRQ_SYSTEMHOLD 8  // System Hold Interrupt
 #define IRQ_INT2_3     10 // External Interrupt 2~3
 #define IRQ_SPI	       11 // SPI Interrupt
-#define IRQ_ADC	       13 // ADC Conversion Complete
-#define IRQ_TIMER2     14 // Timer2 Overflow
+#define IRQ_PWMD       12 // PWMD Interrupt
+#define IRQ_TIMER3     14 // Timer3 Overflow
 #define IRQ_PWMA       15 // PWMA Interrupt
+#define IRQ_PWME       16 // PWME Interrupt
 #define IRQ_USB	       17 // USB Interrupt
+#define IRQ_PWMF       18 // PWMF Interrupt
 #define IRQ_I2CA       20 // I2CA Interrupt
 #define IRQ_PWMB       23 // PWMB Interrupt
 #define IRQ_PWMC       24 // PWMC Interrupt

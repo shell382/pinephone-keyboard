@@ -1,29 +1,34 @@
 Firmware
 --------
 
-- mask R5:C4 and R4:C2 because these are always on on my prototype
-  and prevent development of idle functionality
-  (Z key is stuck)
+- implement I2C configuration options
+  - disable keyboard matrix scanning
 
-   C1  2  3  4  5  6  7  8  9  10 11 12 
-R1  .  .  .  .  .  .  .  .  .  .  .  .
-R2  .  .  .  .  .  .  .  .  .  .  .  .
-R3  .  .  .  .  .  .  .  .  .  .  .  .
-R4  .  X  .  .  .  .  .  .  .  .  .  .
-R5  .  .  .  X  .  .  .  .  .  .  .  .
-R6  .  .  .  .  .  .  .  .  .  .  .  .
+- only enable USB in stock FW upon request over I2C (idling USB stack takes
+  about 0.6mA on top of 1.8mA baseline)
 
-- sleep when no key is pressed and wakeup using pin change interrupt
-  on P6 port
+- first I2C TX after switch to USER firmware after flasging over I2C fails,
+  subsequent ones work
+  - also power consumption indicates power consumption of the sotck firmware
+    so maybe we just sleep in stock instead of switching after flashing?
 
-- wakeup on I2C activity only happens on device address match, so
-  we can only sleep again after the entire transfer completes (how
-  to detect that though?)
+- power measurement / optimization
+  - currently with no USB stack and in constant PD mode: 1.8mA
+  - theoretical lower limit 0.5mA (no idea how they achieve it)
 
-USB Flashing Tool
------------------
 
-- investigate reason for URB errors/empty (in command status INT transfer)
+Charger behavior
+----------------
+
+- does the charger turn off VOUT after some period of low load?
+- does it enable it again to see if there's a need for it?
+- this auto-off behavior will kill the power to the keyboard
+  controller, so we need a way to detect it and power the controller
+  from the pinephone side by enabling VBUS.
+  - tricky!
+  - or make the user keep pressing the kb power button to use the
+    keyboard for a while, like in a train conductor has to in a train :)
+    - not good!
 
 
 Userspace input device daemon

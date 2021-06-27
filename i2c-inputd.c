@@ -19,100 +19,20 @@
 
 // {{{ includes
 
-#include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <inttypes.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <dirent.h>
-#include <poll.h>
+#include "common.c"
+#include "firmware/registers.h"
 
-#include <linux/i2c.h>
-#include <linux/i2c-dev.h>
-#include <linux/gpio.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-#define DEBUG 0
-#define MEGI_PROTO_BUG 0
-
-#if DEBUG
-#define debug(args...) printf(args)
-#else
-#define debug(args...)
-#endif
-
-// }}}
-// {{{ utils
-
-static void syscall_error(int is_err, const char* fmt, ...)
-{
-	va_list ap;
-
-	if (!is_err)
-		return;
-
-	fprintf(stderr, "ERROR: ");
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	fprintf(stderr, ": %s\n", strerror(errno));
-
-	exit(1);
-}
-
-static void error(const char* fmt, ...)
-{
-	va_list ap;
-
-	fprintf(stderr, "ERROR: ");
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	fprintf(stderr, "\n");
-
-	exit(1);
-}
-
-bool read_file(const char* path, char* buf, size_t size)
-{
-	int fd;
-	ssize_t ret;
-
-	fd = open(path, O_RDONLY);
-	if (fd < 0)
-		return false;
-
-	ret = read(fd, buf, size);
-	close(fd);
-	if (ret < 0)
-		return false;
-
-	if (ret < size) {
-		buf[ret] = 0;
-		return true;
-	} else {
-		buf[size - 1] = 0;
-		return false;
-	}
-}
-
-#define KB_ADDR 0x15
+#define MEGI_PROTO_BUG 1
 
 int read_kb(int fd, uint8_t data[16])
 {
 	int ret;
+	uint8_t b = 5;
 	struct i2c_msg msgs[] = {
+		{ KB_ADDR, 0, 1, &b },
 		{ KB_ADDR, I2C_M_RD, 16, data },
 	};
 
@@ -122,17 +42,16 @@ int read_kb(int fd, uint8_t data[16])
 	};
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
-	//syscall_error(ret < 0, "I2C_RDWR failed");
+	syscall_error(ret < 0, "I2C_RDWR failed");
 
 	return ret == 1 ? 0 : -1;
 }
 
-#if 0
-int write_kb(int fd, uint8_t data[16])
+int write_kb(int fd, uint8_t* data)
 {
 	int ret;
 	struct i2c_msg msgs[] = {
-		{ KB_ADDR, 0, 16, data },
+		{ KB_ADDR, 0, 4, data },
 	};
 
 	struct i2c_rdwr_ioctl_data msg = {
@@ -141,101 +60,9 @@ int write_kb(int fd, uint8_t data[16])
 	};
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
-	//syscall_error(ret < 0, "I2C_RDWR failed");
+	syscall_error(ret < 0, "I2C_RDWR failed");
 
 	return ret == 1 ? 0 : -1;
-}
-#endif
-
-static int gpiochip_open(void)
-{
-	int ret;
-	char path[256], buf[1024];
-	int fd = -1;
-
-	for (int i = 0; i < 8; i++) {
-		snprintf(path, sizeof path, "/sys/bus/gpio/devices/gpiochip%d/uevent", i);
-		if (!read_file(path, buf, sizeof buf))
-			continue;
-
-		if (!strstr(buf, "OF_FULLNAME=/soc/pinctrl@1f02c00"))
-			continue;
-
-		snprintf(path, sizeof path, "/dev/gpiochip%d", i);
-
-		int fd = open(path, O_RDWR);
-		syscall_error(fd < 0, "open(%s) failed");
-
-		//ret = ioctl(fd, I2C_SLAVE, addr);
-		//syscall_error(ret < 0, "I2C_SLAVE failed");
-
-		return fd;
-	}
-
-	error("Can't find POGO I2C adapter");
-	return -1;
-}
-
-static int setup_gpio(void)
-{
-	int ret;
-	struct gpio_v2_line_request req = {
-		.num_lines = 1,
-		.offsets[0] = 12,
-		.config.flags = GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_UP | /*GPIO_V2_LINE_FLAG_ACTIVE_HIGH |*/ GPIO_V2_LINE_FLAG_EDGE_FALLING,
-		.consumer = "ppkbd",
-	};
-
-	int fd = gpiochip_open();
-
-	ret = ioctl(fd, GPIO_V2_GET_LINE_IOCTL, &req);
-	syscall_error(ret < 0, "GPIO_V2_GET_LINE_IOCTL failed");
-
-	close(fd);
-
-	return req.fd;
-}
-
-static int get_int_value(int lfd)
-{
-	int ret;
-	struct gpio_v2_line_values vals = {
-		.mask = 1,
-	};
-
-	ret = ioctl(lfd, GPIO_V2_LINE_GET_VALUES_IOCTL, &vals);
-	syscall_error(ret < 0, "GPIO_V2_GET_LINE_IOCTL failed");
-
-	return vals.bits & 0x1;
-}
-
-static int pogo_i2c_open(void)
-{
-	int ret;
-	char path[256], buf[1024];
-	int fd = -1;
-
-	for (int i = 0; i < 8; i++) {
-		snprintf(path, sizeof path, "/sys/class/i2c-adapter/i2c-%d/uevent", i);
-		if (!read_file(path, buf, sizeof buf))
-			continue;
-
-		if (!strstr(buf, "OF_FULLNAME=/soc/i2c@1c2b400"))
-			continue;
-
-		snprintf(path, sizeof path, "/dev/i2c-%d", i);
-
-		int fd = open(path, O_RDWR);
-		syscall_error(fd < 0, "open(%s) failed");
-
-		//ret = ioctl(fd, I2C_SLAVE, addr);
-		//syscall_error(ret < 0, "I2C_SLAVE failed");
-
-		return fd;
-	}
-
-	error("Can't find POGO I2C adapter");
-	return -1;
 }
 
 #include "kmap.h"
@@ -360,7 +187,7 @@ void on_press(uint8_t phys_idx)
 			fn_mode = 1;
 			return;
 		}
-	
+
 		keys = keymap_fn[phys_idx];
 	} else if (pine_idx >= 0 || pine_mode) {
 		if (key == KEY_ESC) {
@@ -454,7 +281,6 @@ void update_keys(uint8_t* map)
 		}
 	}
 
-
 	// which new keys are pressed?
 	for (int i = 0; i < n_keys; i++) {
 		int key = keys[i];
@@ -468,18 +294,6 @@ void update_keys(uint8_t* map)
 	}
 }
 
-uint64_t time_abs(void)
-{
-	struct timespec tmp;
-	int ret;
-
-	ret = clock_gettime(CLOCK_MONOTONIC, &tmp);
-	if (ret < 0)
-		return 0;
-
-	return tmp.tv_sec * 1000000000ull + tmp.tv_nsec;
-}
-
 int main(int ac, char* av[])
 {
 	int fd, ret;
@@ -487,13 +301,16 @@ int main(int ac, char* av[])
 	fd = pogo_i2c_open();
 	uinput_fd = open_uinput_dev();
 
-	int lfd = setup_gpio();
+	int lfd = gpio_setup_pl12(GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_UP | /*GPIO_V2_LINE_FLAG_ACTIVE_HIGH |*/ GPIO_V2_LINE_FLAG_EDGE_FALLING);
 
 	struct pollfd fds[2] = {
 		{ .fd = lfd, .events = POLLIN, },
 	};
 
 	debug("\033[2J");
+
+	uint8_t buf[4] = {1, 2, 3, 4};
+	ret = write_kb(fd, buf);
 
 	while (1) {
 		ret = poll(fds, 1, 10000);
@@ -510,9 +327,7 @@ int main(int ac, char* av[])
 			if (ret)
 				continue;
 
-#if DEBUG
-			print_bitmap(buf + 4);
-#endif
+//			print_bitmap(buf + 4);
 			update_keys(buf + 4);
 		}
 	}

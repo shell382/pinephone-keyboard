@@ -17,7 +17,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define VERSION "1.0"
 #include "common.c"
 
 // }}}
@@ -558,14 +557,14 @@ const char* boot_cond_text(uint8_t status)
 static void usage(void)
 {
 	printf(
-	       "Usage: ppkb-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]\n"
-	       "                    [--help] [<read|write|info|reset>...]\n"
+	       "Usage: ppkb-usb-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]\n"
+	       "                        [--help] [<read|write|info|reset>...]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -i, --rom-in <path>   Specify path to binary file you want to flash.\n"
 	       "  -o, --rom-out <path>  Specify path where you want to store the contents\n"
 	       "                        of code ROM read from the device.\n"
-	       "  -s, --rom-size <size> Specify how many bytes of code rom to flash\n"
+	       "  -s, --size <size>     Specify how many bytes of code rom to flash\n"
 	       "                        starting from offset 0x2000 in the rom file.\n"
 	       "  -v, --verbose         Show details of what's going on.\n"
 	       "  -h, --help            This help.\n"
@@ -579,7 +578,7 @@ static void usage(void)
 	       "Format of the ROM files is a flat binary. Only the part of it starting\n"
 	       "from 0x2000 will be flashed. Use -s to specify how many bytes to write.\n"
 	       "\n"
-	       "Pinephone keyboard flashing tool " VERSION "\n"
+	       "Pinephone keyboard USB flashing tool " VERSION "\n"
 	       "Written by Ondrej Jirman <megi@xff.cz>, 2021\n"
 	       "Licensed under GPLv3, see https://xff.cz/git/pinephone-keyboard/ for\n"
 	       "more information.\n"
@@ -592,7 +591,7 @@ int main(int ac, char* av[])
 {
 	char* rom_in = NULL;
 	char* rom_out = NULL;
-	int size = 0x1000;
+	int size = 0x1200;
 	int ret;
 
 	while (1) {
@@ -618,7 +617,7 @@ int main(int ac, char* av[])
 			rom_in = strdup(optarg);
 			break;
 		case 's':
-			if (strstr("0x", optarg) == optarg) {
+			if (strstr(optarg, "0x") == optarg) {
 				errno = 0;
 				char* next = NULL;
 				size = strtol(optarg + 2, &next, 16);

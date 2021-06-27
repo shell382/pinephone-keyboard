@@ -20,8 +20,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-$pmap = file_get_contents("physical-map.txt");
-$kmap = file_get_contents($argv[1]);
+$pmap = file_get_contents($argv[1]);
+$kmap = file_get_contents($argv[2]);
 
 // high nibble = row, low nibble col
 $el_phys_map = [];

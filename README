@@ -1,4 +1,29 @@
-This is work in progress free software firmware for pinephone keyboard.
+FOSS firmware for pinephone keyboard
+====================================
+
+Features:
+
+- Dual firmware architecture: stock firmware + optional user firmware.
+- Stock firmware implements the full functionality of the keyboard.
+  - Stock firmware is layout independent, it reports the raw status
+    of the whole keyboard matrix.
+  - Key maps and combinations can be arbitrarily changed in the keyboard
+    driver without re-flashing the firmware.
+  - Stock firmware should be sufficient for most users who will not want
+    to do HW modifications to their keyboard to add more peripherals to
+    the keyboard MCU.
+  - Power efficient implementation using power-down feature of the MCU
+    to save power as much as possible. (currently: 9 mW when idle, 20mW
+    in active scanning mode - with at least one key pressed)
+- Stock firmware is flashed in factory and allows flashing user firmware
+  from the pinephone itself over I2C interface.
+- User firmware can be used either for updates or for customizations
+  (SW support for HW modifications of the keyboard)
+- USB stack and tools for stock firmware flashing using ELAN's original
+  bootloader to ease development of the stock firmware.
+- Self-testing features to quickly test for issues with the keyboard matrix.
+- Fully based on FOSS software, with no dependencies. You only need
+  sdcc 4.1+ to build the firmware.
 
 See demo video https://megous.com/dl/tmp/kb.mp4 and some technical overview https://xnux.eu/log/
 

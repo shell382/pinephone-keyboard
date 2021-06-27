@@ -17,7 +17,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define DEBUG 1
 #include "common.c"
 
 int kb_open(void)
@@ -93,21 +92,6 @@ int response(uint8_t res[8])
 	return 0;
 }
 
-ssize_t xwrite(int fd, uint8_t* buf, size_t len)
-{
-	size_t off = 0;
-	
-	while (off < len) {
-		ssize_t ret = write(fd, buf + off, len - off);
-		if (ret < 0)
-			return ret;
-		
-		off += ret;
-	}
-	
-	return off;
-}
-
 int read_stdout(void)
 {
 	int ret;
@@ -124,6 +108,11 @@ int read_stdout(void)
 	ret = handle_urb(usb_fd, &urb, 10);
 	if (ret)
 		return ret;
+
+	debug("STD%d:", urb.actual_length);
+	for (int i = 0; i < urb.actual_length; i++)
+		debug(" %02hhx", buf[i]);
+	debug("\n");
 
 	if (urb.actual_length > 0) {
 		ssize_t rv = xwrite(1, buf, urb.actual_length);
@@ -180,15 +169,17 @@ int main(int ac, char* av[])
 	if (usb_fd < 0)
 		error("Failed to open the keyboard");
 	
-	int i = 0;
 	while (1) {
 		ret = read_stdout();
+		if (ret < 0 && errno != 110)
+			syscall_error(true, "read_stdout failed");
 
 		ret = read_keys(keys);
+		if (ret < 0 && errno != 110)
+			syscall_error(true, "read_keys failed");
+
 		if (ret == 0)
 			print_bitmap(keys);
-		
-		i++;
 	}
 
 	return 0;

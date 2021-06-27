@@ -1,13 +1,19 @@
-Flashing tool from usb-flasher/ directory can be used to flash the
-firmware over USB.
+Flashing over USB
+=================
+
+This method allows updating the stock firmware on the keyboard.
+
+Flashing tool ppkb-usb-flasher can be used to flash the firmware over USB.
+You'll have to solder USB cable to the keyboard controller board to be able
+to user this method.
 
 For example to build and flash your own firmware you could run these
 commands:
 
    # save the original firmware in case you want to restore it
 
-   ./usb-flasher/ppkb-flasher info > saved-info.txt
-   ./usb-flasher/ppkb-flasher --rom-out saved-rom.bin read
+   ./ppkb-usb-flasher info > saved-info.txt
+   ./ppkb-usb-flasher --rom-out saved-rom.bin read
 
    # build the new firmware (you may need sdcc 4.1, older versions may
    # miscompile the firmware)
@@ -16,20 +22,21 @@ commands:
 
    # flash the new firmware
 
-   ./usb-flasher/ppkb-flasher --rom-in firmware/build/fw.bin write reset
+   ./ppkb-usb-flasher --rom-in firmware/build/fw-stock.bin write reset
+
 
 
 Full help output
 ----------------
 
-Usage: ppkb-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]
-                    [--help] [<read|write|info|reset>...]
+Usage: ppkb-usb-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]
+                        [--help] [<read|write|info|reset>...]
 
 Options:
   -i, --rom-in <path>   Specify path to binary file you want to flash.
   -o, --rom-out <path>  Specify path where you want to store the contents
                         of code ROM read from the device.
-  -s, --rom-size <size> Specify how many bytes of code rom to flash
+  -s, --size <size>     Specify how many bytes of code rom to flash
                         starting from offset 0x2000 in the rom file.
   -v, --verbose         Show details of what's going on.
   -h, --help            This help.
@@ -43,7 +50,68 @@ Commands:
 Format of the ROM files is a flat binary. Only the part of it starting
 from 0x2000 will be flashed. Use -s to specify how many bytes to write.
 
-Pinephone keyboard flashing tool 1.0
-Written by Ondrej Jirman <megi@xff.cz>, 2021
-Licensed under GPLv3, see https://xff.cz/git/pinephone-keyboard/ for
-more information.
+
+Flashing over I2C
+=================
+
+This method users stock stock firmware's flashing interface to allow writing
+user's own firmware to the keyboard, while keeping the stock firmware intact.
+
+Stock firmware will remain present and available for future updates of the
+users fiwmare.
+
+You can use this method without having to disassemble the keyboard, or
+solder anything.
+
+You'll need to build the user firmware in a special way, so that it's placed
+at address 0x4000 in code ROM. Interrupt vectors are forwarded with 0x4000
+offset.
+
+
+For example to build and flash your own firmware you could run these
+commands:
+
+   # build the new firmware (you may need sdcc 4.1, older versions may
+   # miscompile the firmware)
+
+   (cd firmware && ./build.sh)
+
+   # flash the new firmware
+
+   ./ppkb-i2c-flasher --rom-in firmware/build/fw-user.bin write reset
+
+Depending on the user firmware, you may need to change stock firmware entry
+method using -e option.
+
+
+Full help output
+----------------
+
+Usage: ppkb-i2c-flasher [--rom-in <path>] [--rom-out <path>] [--verbose]
+                        [--help] [<read|write|erase|info|reset>...]
+
+Options:
+  -i, --rom-in <path>   Specify path to binary file you want to flash.
+  -o, --rom-out <path>  Specify path where you want to store the contents
+                        of code ROM read from the device.
+  -s, --size <size>     Specify how many bytes of code rom to flash
+                        starting from offset 0x4000 in the rom file.
+  -e, --entry <manual|i2c|none>
+                        Specify how to enter the stock firmware:
+                        - manual: Ask the user to power-cycle the keyboard
+                        - i2c: Send I2C command to make supporting user
+                        - none: Assume stock firmware is already running
+  -v, --verbose         Show details of what's going on.
+  -h, --help            This help.
+
+Commands:
+  info      Display information about the current firmware.
+  read      Read ROM from the device to --rom-out file.
+  write     Flash ROM file to the device from --rom-in.
+  erase     Erase the user firmware.
+  reset     Perform software reset of the MCU.
+
+Format of the ROM files is a flat binary. Only the part of it starting
+from 0x4000 will be flashed. Use -s to specify how many bytes to write.
+The stock firmware between 0x2000 and 0x4000 will be preserved.
+

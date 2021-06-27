@@ -20,6 +20,13 @@ Device address is 0x15.
 Registers
 ---------
 
+General ranges:
+  0x00 - 0x1f - Read-only status range
+  0x20 - 0x2f - Writable keyboard control range
+  0x70 - 0xf4 - Flashing interface
+  0xff        - Debug log
+
+
 0x00: Device ID1 (0x4b)
 0x01: Device ID2 (0x42)
 0x02: Firmware revision
@@ -27,8 +34,15 @@ Registers
    bit 0: USB debugger
    bit 1: Flashing mode
    bit 2: Self-test features
+   bit 3: Stock firmware flag (only stock firmware should have this set)
    
-0x04: System configuration
+0x06: bits 3-0: number of rows, bits 7-4 number of cols
+0x07: CRC8 of keyboard data from 0x08-0x13
+0x08: Keyboard data for column 1
+...
+0x13: Keyboard data for column 12 (up to number of cols, in this case 12)
+
+0x20: System configuration
    bit 0: disable KB scanning (1: scanning disabled, 0: scanning enabled)
    bit 1: poll mode
           1: don't rely on row change detection, poll the matrix periodically
@@ -39,7 +53,7 @@ Registers
           1: enabled
           0: disabled
 
-0x06: System command
+0x21: System command
       Writing values into this register causes the firmware to perform
       certain one-shot actions:
 
@@ -49,23 +63,34 @@ Registers
                    (results for both tests will be stored in test-result
                     registers)
 
-0x10: Keyboard data for column 1
-...
-0x1b: Keyboard data for column 12
-0x1c: CRC8 of keyboard data from 0x10-0x0b
+      The register is set to 0x00 or 0xff after the operation completes.
+      0xff means error.
 
-0x20: Writing value 0x53 ('S') to this register stops the main app from
+0x22: Writing value 0x53 ('S') to this register stops the main app from
       jumping to the user app.
 
-0x50: Self-test results (32 bytes)
-...
-0x6f:
-      
 
-0x70: Flashing mode unlock key
-      (writing 0x46 to this register unlocks the flashing mode.)
+0x70: 128B block of EEPROM data (either read from code memory or to be
+...   written)
+0xef
 
-0x71: Flashing control
+0xf0: target address low byte
+0xf1: target address high byte
+
+0xf2: CRC8 calculated for the 128B block of data from 0x70-0xef
+      - this must be written by the user when preparing data for write
+        operation, MCU checks the CRC8 of the data and compares it against
+        the value in this register before starting the execution of
+        0x57 command
+      - this is updated by the MCU after reading the data from flash memory
+        so the user can check the checksum against the data read from
+        0x70-0xef
+
+0xf3: Flashing mode unlock key
+      - writing 0x46 to this register unlocks the flashing mode.
+      - this register is cleared after command completion
+
+0xf4: Flashing control
       Writing various commands to this register makes the MCU execute them,
       if the MCU is not executing the previous command. Available commands:
       
@@ -79,36 +104,30 @@ Registers
       This register will ignore further commands as long as the last operation
       is still in progress. This register will contain the code of the
       currently executed operation, and will be cleared after the operation
-      finishes. Completion is also signalled by pulsing the INT pin shortly.
+      finishes.
       
       If the operation fails, this register will contain value 0xff. If it
       succeeds it will contain value 0x00.
-      
-0x7d: target address low byte
-0x7e: target address high byte
 
-0x7f: CRC8 calculated for the 128B block of data from 0x80-0xff
-      - this must be written by the user when preparing data for write
-        operation, MCU checks the CRC8 of the data and compares it against
-        the value in this register before starting the execution of
-        0x57 command
-
-      - this is updated by the MCU after reading the data from flash memory
-
-0x80: 128B block of EEPROM data (either read from code memory or to be
-...   written)
-0xff
-
+0xff: Debug log
+      - reading from this register returns next character of the debug log
+        or 0
+      - register address is not auto-advanced for the 0xff address, so you
+        can read any number of bytes from 0xff to get the debug log text
+      - debug log stores results of self-tests
 
 Usage
 -----
 
-User can modify register 0x03 to choose how the firmware should operate.
+User can modify register 0x20 to choose how the firmware should operate.
 The settings are not persistent across resets.
 
 To read the keyboard matrix status, the user can perform a 13B read transaction
-from address 0x10 and calculate CRC8 on the first 12 bytes and compare it with
-the 13th byte.
+from address 0x07. Data for each column start at 0x08, 0x07 contains CRC8 checksum
+of the 12 bytes starting from 0x08.
+
+You can verify the data by calculating CRC8 on the last 12 bytes and compare it
+with the 1st byte.
 
 Bit 0 corresponds to row 1, bit 5 to row 6, bits 6 and 7 are always 0.
 
@@ -122,23 +141,43 @@ The firmware is split into 3 parts:
 0x2000 - 0x4000: Stock FOSS firmware (flashable from stock bootloader)
 0x4000 - 0x8000: User app (optional, flashable over I2C from stock FOSS firmware)
 
-When the stock FOSS firmware runs after MCU powerup or reset, it will wait for 200ms
-and listen on I2C. If 0x53 is not written to register 0x20 during that time and
-the user's app is flashed and commited, it will redirect interrupt vectors to
-0x4000+offset and jump to 0x4000, which will start executing user's app.
+It is necessary to execute stock firmware to flash the user firmware. Stock
+firmware will normally re-direct execution to user firmware if user firmware
+is flashed.
 
-User app should always return value 0x00 when reading register 0x20, to make it
-easy to distinguish that the "stay in stock app" command succeeded.
+After MCU powerup or reset, stock firmware will listen for 1s on I2C interface,
+before passing control to the user firmware. If 0x53 is not written to register
+0x22 during that time, this will prevent execution of the user's firmware.
+
+If the user firmware execution is not prevented in this way, stock firmware
+will redirect interrupt vectors from 0x0000+offset to 0x4000+offset and jump
+to 0x4000, which will start execution of user's firmware. User firmware must
+not change last byte of IRAM, because it is used by the stock firmware's
+interrupt redirection mechanism.
+
+User's firmware should always implement some way to reset the MCU via I2C
+interface. This will make development and flashing easier. Failing that,
+I2C flashing tool also allows for manual entry to stock firmware which
+is done by holding the power key for > 12s to force power cycle on the MCU.
+
 
 Flashing steps:
 
-1) Unlock by writing 0x46 to register 0x70
-2) Write address to 0x7d/0x7e
-3) Write data to 0x80-0xff and CRC8 to 0x7f
-4) Write command 0x57 to 0x71
-5) Poll 0x71 for result (either 0x00 or 0xff)
-   ... repeat 2-5 for all memory locations to be flashed
-6) Write command 0x43 to reg 0x71
-7) Wait for success
+1) Write 128 B of data to 0x70-0xef and data CRC8 to 0xf2
+2) Write address to 0xf0 (low) and 0xf1 (high byte)
+   (only range from 0x4000 to 0x7fff) is writeable
+3) Unlock by writing 0x46 to register 0xf3
+4) Write command 0x57 to 0xf4
+5) Poll 0xf4 for result (either 0x00 or 0xff)
+   ... repeat 1-5 for all memory locations to be flashed
+6) Write command 0x43 to reg 0xf4
+7) Poll 0xf4 for result (either 0x00 or 0xff)
+8) Reset the MCU by writing command 0x52 to reg 0x21
 
-Reset the MCU.
+
+Self-tests
+----------
+
+1) Write command 'r' or 'c' to reg 0x21
+2) Read repeatedly from register 0xff to get the self-test results
+   in human readable text form

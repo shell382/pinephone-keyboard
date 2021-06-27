@@ -21,75 +21,45 @@
 #include <string.h>
 #include <em85f684a.h>
 
-// configuration (we can make this runtime configurable via i2c)
-// polled input mode is necessary if some rows are always on
-#define POLL_INPUT 1
+#ifndef CONFIG_FLASH_ENABLE
+#define CONFIG_FLASH_ENABLE 1
+#endif
+#ifndef CONFIG_DEBUG_LOG
+#define CONFIG_DEBUG_LOG 1
+#endif
+#ifndef CONFIG_USB_STACK
+#define CONFIG_USB_STACK 1
+#endif
+#ifndef CONFIG_SELFTEST
+#define CONFIG_SELFTEST 1
+#endif
+#ifndef CONFIG_STOCK_FW
+#define CONFIG_STOCK_FW 1
+#endif
+
+#define USB_DEBUG 0
 
 #define BIT(n) (1u << (n))
 
-// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
-#define T0_SET_TIMEOUT(n) { \
-	TL0 = 0x00; \
-	TH0 = (0x10000u - n) >> 8; \
-	TL0 = (0x10000u - n) & 0xff; \
-	}
-
-#define T1_SET_TIMEOUT(n) { \
-	TL1 = 0x00; \
-	TH1 = (0x10000u - n) >> 8; \
-	TL1 = (0x10000u - n) & 0xff; \
-	}
-
-#define delay_us(n) { \
-	TL0 = 0x00; \
-	TF0 = 0; \
-	TH0 = (0x10000u - 2 * n) >> 8; \
-	TL0 = (0x10000u - 2 * n) & 0xff; \
-	while (!TF0); \
-}
-
-static __sbit p6_changed = 0;
-static __sbit run_tasks = 0;
-
-// we use this interrupt for wakeup from sleep on input change
-
-void pinchange_interupt(void) __interrupt(IRQ_PINCHANGE)
-{
-	uint8_t saved_page = PAGESW;
-
-	PAGESW = 0;
-
-	if (P0_ICEN & BIT(1))
-		p6_changed = 1;
-
-	// clear input change flags
-	P0_ICEN = BIT(5);
-
-	PAGESW = saved_page;
-}
-
-// we use this interrupt as a scheduling tick (wakeup from sleep)
-
-void timer1_interupt(void) __interrupt(IRQ_TIMER1)
-{
-	run_tasks = 1;
-
-	// 20 ms
-	T1_SET_TIMEOUT(40000);
-
-	TF1 = 0;
-}
-
 // {{{ Debug logging
 
-static uint8_t __xdata log_buffer[1024];
+#if CONFIG_DEBUG_LOG
+
+// debug logging needs to have all variables volatile, since they
+// can be accessed from interrupts
+//
+// any access to these variables has to happen with interrupts disabled
+
+static volatile uint8_t __xdata log_buffer[1024];
 // end = start => empty buffer
 // end can never equal start on a filled buffer
 // end points to the last char if end != start
-static uint16_t log_start = 0;
-static uint16_t log_end = 0;
+static volatile uint16_t log_start = 0;
+static volatile uint16_t log_end = 0;
 
-static void putc(char c)
+// putc needs to disable interrupts (thus it's marked __critical)
+// it's possible to call putc in any context
+static void putc(char c) __critical
 {
 	log_end = (log_end + 1) % 1024;
 
@@ -151,8 +121,221 @@ static void put_hex_w(uint16_t hex)
 	put_hex_b(hex);
 }
 
+#else
+
+#define putc(a)
+#define puts(a)
+#define put_hex_b(a)
+#define put_hex_w(a)
+#define put_hex_n(a)
+#define put_uint(a)
+
+#endif
+
+// }}}
+// {{{ Global flags
+
+static __bit jump_to_usb_bootloader = 0;
+
+// }}}
+// {{{ Interrupt forwarding
+
+#if CONFIG_STOCK_FW
+
+// Stock firmware translates all interrupts to inerrupt vectors at 0x4000
+// if IRAM location 0xff contains 0. Otherwise, it call interrupt handlers
+// in stock FW.
+
+#pragma noiv
+
+uint8_t __idata __at(0xff) stock_flag = 1;
+
+//XXX: check if we want to jump to user FW
+
+// cleanup after stock firmware and jump to user firmware
+static void jmp_to_user_fw(void) __naked
+{
+	PAGESW = 0;
+
+	// disable all interrupts
+	IE = 0;
+	P0_EIE1 = 0;
+	P0_EIE2 = 0;
+	P0_EIE3 = 0;
+
+	// disable timers
+	TCON = 0;
+	TMOD = 0;
+	PSW1 = 0;
+
+	// disable I2C B
+	P0_I2CBCR1 = 0x00;
+	P0_I2CBCR2 = 0x20;
+	P0_I2CBINT = 0;
+
+	// disable watchdog
+	P0_WDTCR = 0x07; // disable watchdog ~1s
+	P0_WDTKEY = 0xb1; // disable watchdog
+
+	// reset powerdown/reset registers
+	P0_DEVPD1 = 0;
+	P0_DEVPD2 = 0;
+	P0_DEVPD3 = 0;
+	P0_PRST = 0;
+
+	// disable USB and clear irq flags
+	PAGESW = 1;
+	P1_PHYTEST0 &= ~BIT(6); // phy disable
+	P1_UDCCTRL &= ~BIT(6); // udc disable
+	P1_UDCINT0STA = 0;
+	P1_UDCINT1STA = 0;
+	P1_UDCINT2STA = 0;
+	P1_UDCINT0EN = 0;
+	P1_UDCINT1EN = 0;
+	P1_UDCINT2EN = 0;
+
+	// disable pullups, set all pins to input
+	P1_PHCON2 = 0;
+	P1_P9M0 = 0xffu;
+	PAGESW = 0;
+	P0_PHCON0 = 0;
+	P0_PHCON1 = 0;
+	P0_P6M0 = 0xffu;
+	P0_P8M0 = 0xffu;
+	P0_ICEN = 0;
+
+	stock_flag = 0;
+	__asm__ ("ljmp 0x4000");
+}
+
+#endif
+
+// }}}
+// {{{ Original USB bootloader integration
+
+static void usb_bootloader_jump(void) __naked
+{
+	PAGESW = 0;
+
+	// disable all interrupts
+	IE = 0;
+	P0_EIE1 = 0;
+	P0_EIE2 = 0;
+	P0_EIE3 = 0;
+
+	// disable timers
+	TCON = 0;
+	TMOD = 0;
+	PSW1 = 0;
+
+	// disable I2C B
+	P0_I2CBCR1 = 0x00;
+	P0_I2CBCR2 = 0x20;
+	P0_I2CBINT = 0;
+
+	// disable watchdog
+	P0_WDTCR = 0x07; // disable watchdog ~1s
+	P0_WDTKEY = 0xb1; // disable watchdog
+
+	// reset powerdown/reset registers
+	P0_DEVPD1 = 0;
+	P0_DEVPD2 = 0;
+	P0_DEVPD3 = 0;
+	P0_PRST = 0;
+
+	// disable USB and clear irq flags
+	PAGESW = 1;
+	P1_PHYTEST0 &= ~BIT(6); // phy disable
+	P1_UDCCTRL &= ~BIT(6); // udc disable
+	P1_UDCINT0STA = 0;
+	P1_UDCINT1STA = 0;
+	P1_UDCINT2STA = 0;
+	P1_UDCINT0EN = 0;
+	P1_UDCINT1EN = 0;
+	P1_UDCINT2EN = 0;
+
+	// disable pullups, set all pins to input
+	P1_PHCON2 = 0;
+	P1_P9M0 = 0xffu;
+	PAGESW = 0;
+	P0_PHCON0 = 0;
+	P0_PHCON1 = 0;
+	P0_P6M0 = 0xffu;
+	P0_P8M0 = 0xffu;
+	P0_ICEN = 0;
+
+	__asm__("mov r6,#0x5a");
+	__asm__("mov r7,#0xe7");
+	__asm__("ljmp 0x0118");
+}
+
+// }}}
+// {{{ Timers/delays
+
+// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
+#define T0_SET_TIMEOUT(n) { \
+	TL0 = 0x00; \
+	TH0 = (0x10000u - n) >> 8; \
+	TL0 = (0x10000u - n) & 0xff; \
+	}
+
+#define T1_SET_TIMEOUT(n) { \
+	TL1 = 0x00; \
+	TH1 = (0x10000u - n) >> 8; \
+	TL1 = (0x10000u - n) & 0xff; \
+	}
+
+#define delay_us(n) { \
+	TL0 = 0x00; \
+	TF0 = 0; \
+	TH0 = (0x10000u - 2 * n) >> 8; \
+	TL0 = (0x10000u - 2 * n) & 0xff; \
+	while (!TF0); \
+}
+
+static volatile __bit run_timed_tasks = 0;
+
+// we use this interrupt as a scheduling tick (wakeup from sleep)
+
+void timer1_interrupt(void) __interrupt(IRQ_TIMER1) __using(1)
+{
+	run_timed_tasks = 1;
+
+	// 20 ms
+	T1_SET_TIMEOUT(40000);
+
+	TF1 = 0;
+}
+
+// }}}
+// {{{ GPIO change interrupt
+
+// we use this interrupt for wakeup from sleep on input change on port 6
+
+static volatile __bit p6_changed = 0;
+
+void pinchange_interrupt(void) __interrupt(IRQ_PINCHANGE) __using(1)
+{
+	uint8_t saved_page = PAGESW;
+
+	PAGESW = 0;
+
+	// change flag
+	if (P0_ICEN & BIT(1)) {
+		p6_changed = 1;
+	}
+
+	// disable port 6 change detection
+	P0_ICEN = 0;
+	ICIE = 0;
+
+	PAGESW = saved_page;
+}
+
 // }}}
 // {{{ Key scanning
+
+static __bit scan_active = 0;
 
 // Keyboard has 12 columns and 6 rows directly connected to GPIOs.
 //
@@ -212,7 +395,7 @@ static void put_hex_w(uint16_t hex)
 // In this state we can use keyscan_idle_is_pressed() to detect whether
 // any key is pressed, and switch to active mode via keyscan_active().
 //
-void keyscan_idle(void)
+static void keyscan_idle(void)
 {
 	// enable output low on all columns (P9[7:5] P5[7:0] P8[0])
 
@@ -222,32 +405,19 @@ void keyscan_idle(void)
 	P8 &= 0xfe;
 	P9 &= 0x1f;
 
-#if POLL_INPUT
-	// make all columns an input, hi-Z (saves power)
-	P0_P5M0 = ~0x00u;
-	P0_P8M0 |= ~0xfeu;
-	PAGESW = 1;
-	P1_P9M0 |= ~0x1fu;
-	ICIE = 0;
-	p6_changed = 0;
-#else
 	P0_P5M0 = 0x00;
-	P0_P8M0 &= 0xfe;
+	P0_P8M0 &= 0xfeu;
 	PAGESW = 1;
-	P1_P9M0 &= 0x1f;
+	P1_P9M0 &= 0x1fu;
 
-	// enable input change interrupt on port6 and clear the interrupt flag after
-	// things stabilize
+	// delay a bit for things to stabilize
         delay_us(10);
 
-	PAGESW = 0;
 	p6_changed = 0;
-	P0_ICEN = BIT(5);
-	ICIE = 1;
-#endif
+	scan_active = 0;
 }
 
-uint8_t keyscan_idle_is_pressed(void)
+static uint8_t keyscan_idle_is_pressed(void)
 {
 	return ~P6 & 0x3f;
 }
@@ -257,12 +427,9 @@ uint8_t keyscan_idle_is_pressed(void)
 //
 // In this state, we can call keyscan_scan() to perform a scan.
 //
-void keyscan_active(void)
+static void keyscan_active(void)
 {
 	// put all columns to hi-Z (P9[7:5] P5[7:0] P8[0])
-
-	// disable input change interrupt
-	ICIE = 0;
 
 	PAGESW = 0;
 
@@ -276,13 +443,12 @@ void keyscan_active(void)
 	P0_P8M0 |= ~0xfeu;
 	PAGESW = 1;
 	P1_P9M0 |= ~0x1fu;
+
+	scan_active = 1;
 }
 
-// XXX: do we need to debounce in the scan function?
-// XXX: it looks like that there should be no bouncing going on mechanically
-
 // 12 byte storage required
-uint8_t keyscan_scan(uint8_t* res)
+static uint8_t keyscan_scan(uint8_t* res)
 {
 	uint8_t pin, mask = 0, row;
 
@@ -318,18 +484,21 @@ uint8_t keyscan_scan(uint8_t* res)
         mask |= row;
 	*res++ = row;
 	P0_P8M0 |= BIT(0);
-	
+
 	return mask;
 }
 
-void ext_int_assert(void)
+// }}}
+// {{{ Enternal interrupt control
+
+static void ext_int_assert(void)
 {
 	P90 = 0;
 	PAGESW = 1;
 	P1_P9M0 &= ~BIT(0);
 }
 
-void ext_int_deassert(void)
+static void ext_int_deassert(void)
 {
 	P90 = 0;
 	PAGESW = 1;
@@ -337,14 +506,560 @@ void ext_int_deassert(void)
 }
 
 // }}}
-// {{{ I2C
+// {{{ CRC-8
 
-#define I2C_N_REGS 16
+static const uint8_t crc8_0x7_table[] = {
+	0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15,
+	0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
+	0x70, 0x77, 0x7e, 0x79, 0x6c, 0x6b, 0x62, 0x65,
+	0x48, 0x4f, 0x46, 0x41, 0x54, 0x53, 0x5a, 0x5d,
+	0xe0, 0xe7, 0xee, 0xe9, 0xfc, 0xfb, 0xf2, 0xf5,
+	0xd8, 0xdf, 0xd6, 0xd1, 0xc4, 0xc3, 0xca, 0xcd,
+	0x90, 0x97, 0x9e, 0x99, 0x8c, 0x8b, 0x82, 0x85,
+	0xa8, 0xaf, 0xa6, 0xa1, 0xb4, 0xb3, 0xba, 0xbd,
+	0xc7, 0xc0, 0xc9, 0xce, 0xdb, 0xdc, 0xd5, 0xd2,
+	0xff, 0xf8, 0xf1, 0xf6, 0xe3, 0xe4, 0xed, 0xea,
+	0xb7, 0xb0, 0xb9, 0xbe, 0xab, 0xac, 0xa5, 0xa2,
+	0x8f, 0x88, 0x81, 0x86, 0x93, 0x94, 0x9d, 0x9a,
+	0x27, 0x20, 0x29, 0x2e, 0x3b, 0x3c, 0x35, 0x32,
+	0x1f, 0x18, 0x11, 0x16, 0x03, 0x04, 0x0d, 0x0a,
+	0x57, 0x50, 0x59, 0x5e, 0x4b, 0x4c, 0x45, 0x42,
+	0x6f, 0x68, 0x61, 0x66, 0x73, 0x74, 0x7d, 0x7a,
+	0x89, 0x8e, 0x87, 0x80, 0x95, 0x92, 0x9b, 0x9c,
+	0xb1, 0xb6, 0xbf, 0xb8, 0xad, 0xaa, 0xa3, 0xa4,
+	0xf9, 0xfe, 0xf7, 0xf0, 0xe5, 0xe2, 0xeb, 0xec,
+	0xc1, 0xc6, 0xcf, 0xc8, 0xdd, 0xda, 0xd3, 0xd4,
+	0x69, 0x6e, 0x67, 0x60, 0x75, 0x72, 0x7b, 0x7c,
+	0x51, 0x56, 0x5f, 0x58, 0x4d, 0x4a, 0x43, 0x44,
+	0x19, 0x1e, 0x17, 0x10, 0x05, 0x02, 0x0b, 0x0c,
+	0x21, 0x26, 0x2f, 0x28, 0x3d, 0x3a, 0x33, 0x34,
+	0x4e, 0x49, 0x40, 0x47, 0x52, 0x55, 0x5c, 0x5b,
+	0x76, 0x71, 0x78, 0x7f, 0x6a, 0x6d, 0x64, 0x63,
+	0x3e, 0x39, 0x30, 0x37, 0x22, 0x25, 0x2c, 0x2b,
+	0x06, 0x01, 0x08, 0x0f, 0x1a, 0x1d, 0x14, 0x13,
+	0xae, 0xa9, 0xa0, 0xa7, 0xb2, 0xb5, 0xbc, 0xbb,
+	0x96, 0x91, 0x98, 0x9f, 0x8a, 0x8d, 0x84, 0x83,
+	0xde, 0xd9, 0xd0, 0xd7, 0xc2, 0xc5, 0xcc, 0xcb,
+	0xe6, 0xe1, 0xe8, 0xef, 0xfa, 0xfd, 0xf4, 0xf3
+};
 
-static uint8_t i2c_rx_cnt = 0;
-static uint8_t i2c_tx_cnt = 0;
-static uint8_t i2c_tx_buf[I2C_N_REGS] = {0xaa, 0x55};
-static uint8_t i2c_rx_buf[I2C_N_REGS];
+static uint8_t crc8(const uint8_t *pdata, size_t nbytes)
+{
+	unsigned int idx;
+	uint8_t crc = 0;
+
+	while (nbytes--) {
+		idx = (crc ^ *pdata);
+		crc = (crc8_0x7_table[idx]) & 0xff;
+		pdata++;
+	}
+
+	return crc;
+}
+
+// }}}
+// {{{ Public I2C register interface
+
+#include "registers.h"
+
+// all the variables are volatile because they can be accessed
+// from interrupt context of I2C interrupt handler
+
+static volatile uint8_t __idata ro_regs[REG_KEYMATRIX_STATE_END + 1] = {
+	[REG_DEVID_K] = 'K',
+	[REG_DEVID_B] = 'B',
+	[REG_FW_REVISION] = FW_REVISION,
+	[REG_FW_FEATURES] =
+#if CONFIG_USB_STACK && CONFIG_DEBUG_LOG
+		REG_FW_FEATURES_USB_DEBUGGER |
+#endif
+#if CONFIG_FLASH_ENABLE
+		REG_FW_FEATURES_FLASHING_MODE |
+#endif
+#if CONFIG_SELFTEST
+		REG_FW_FEATURES_SELF_TEST |
+#endif
+#if CONFIG_STOCK_FW
+		REG_FW_FEATURES_STOCK_FW |
+#endif
+		0,
+	[REG_KEYMATRIX_SIZE] = 0xc6, // 12 x 6
+};
+
+static volatile uint8_t ctl_regs[3] = {0, 0, 0};
+static volatile __bit sys_cmd_run = 0;
+
+static volatile uint8_t reg_addr = 0;
+
+// }}}
+// {{{ Flashing
+
+static volatile uint8_t __code __at(0x3fff) app_flag;
+
+#if CONFIG_FLASH_ENABLE
+
+// all the variables are volatile because they can be accessed
+// from interrupt context of I2C interrupt handler
+
+static volatile uint8_t flash_regs[5] = {0, 0, 0, 0, 0};
+
+// this is where the HW expects the data for a code ROM page
+static volatile uint8_t __xdata __at(0x780) flash_content[128];
+static volatile uint8_t __xdata __at(0x700) flash_content2[128];
+
+// used to signal that flashing command should be executed and
+// to block further writes to flashing registers via I2C
+static volatile __bit flash_cmd_run = 0;
+
+#define REG_FLASH(n) flash_regs[REG_FLASH_##n - REG_FLASH_ADDR_L]
+
+static void user_app_flag_set(uint8_t flag) __critical
+{
+	if (app_flag == flag)
+		return;
+
+	for (uint8_t i = 0; i < 128; i++)
+		flash_content2[i] = 0xff;
+	flash_content2[0x7fu] = flag;
+
+	PAGESW = 0;
+
+	uint8_t ckcon_saved = CKCON1;
+	CKCON1 = (CKCON1 & ~0x06u) | (1 << 1); // set HS pre-divider to /4
+
+	// unlock
+	P0_FLCR &= ~BIT(2);
+	P0_FLKEY = 0xA9;
+	P0_FLKEY = 0x7F;
+
+	__asm__ (
+		// dptr0 = source ptr, dptr1 = dest ptr
+		"push psw\n"
+		"push _DPL\n"
+		"push _DPH\n"
+		"push ar7\n"
+		"push A\n"
+
+		"mov _DPL1,#0x80\n"
+		"mov _DPH1,#0x3f\n"
+		"mov A,#_flash_content2\n"
+		"mov _DPL,A\n"
+		"mov A,#(_flash_content2 >> 8)\n"
+		"mov _DPH,A\n"
+		"mov r7,#0\n" // counter
+
+		"00002$: movx a,@dptr\n"
+		"inc dptr\n"
+		"orl _PCON,#0x08\n" // select dptr1
+		"movx @dptr,a\n"
+		"inc dptr\n"
+		"anl _PCON,#0xf7\n" // select dptr0
+		"inc r7\n"
+		"cjne r7,#0x80,00002$\n"
+
+		"pop A\n"
+		"pop ar7\n"
+		"pop _DPH\n"
+		"pop _DPL\n"
+		"pop psw\n"
+	);
+
+	P0_FLCR |= BIT(0) | BIT(1);
+	__asm__("nop");
+	while (P0_FLCR & (BIT(0) | BIT(1))); // wait until programming is done
+
+	CKCON1 = ckcon_saved;
+}
+
+static void exec_flashing_command(void)
+{
+	if (!flash_cmd_run)
+		return;
+
+	// skip normal result codes
+	if (REG_FLASH(CMD) == 0 || REG_FLASH(CMD) == 0xff)
+		goto out;
+
+	// return error if the unlock magic is incorrect
+	if (REG_FLASH(UNLOCK) != REG_FLASH_UNLOCK_MAGIC)
+		goto err;
+
+	if (REG_FLASH(CMD) == REG_FLASH_CMD_READ_ROM) {
+		// does not need to be in critical section, because I2C access
+		// is prevented via flash_cmd_run
+		__asm__ (
+			// dptr0 = CODE ptr, dptr1 = XRAM ptr
+			"push psw\n"
+			"push _DPL\n"
+			"push _DPH\n"
+			"push ar7\n"
+			"push A\n"
+
+			"mov _DPL,_flash_regs\n"
+			"mov _DPH,(_flash_regs + 1)\n"
+			"mov A,#_flash_content\n"
+			"mov _DPL1,A\n"
+			"mov A,#(_flash_content >> 8)\n"
+			"mov _DPH1,A\n"
+
+			"mov r7,#0\n" // counter
+			"00001$: mov A,r7\n"
+			"movc a,@a+dptr\n"
+			"orl _PCON,#0x08\n" // select dptr1
+			"movx @dptr,a\n"
+			"inc dptr\n"
+			"anl _PCON,#0xf7\n" // select dptr0
+			"inc r7\n"
+			"cjne r7,#0x80,00001$\n"
+
+			"pop A\n"
+			"pop ar7\n"
+			"pop _DPH\n"
+			"pop _DPL\n"
+			"pop psw\n"
+		);
+
+		REG_FLASH(CRC8) = crc8(flash_content, 128);
+	} else if (REG_FLASH(CMD) == REG_FLASH_CMD_WRITE_ROM) {
+		// does not need to be in critical section, because I2C access
+		// is prevented via flash_cmd_run
+		if (REG_FLASH(CRC8) != crc8(flash_content, 128))
+			goto err;
+		if (REG_FLASH(ADDR_H) < 0x40 || REG_FLASH(ADDR_H) >= 0x80)
+			goto err;
+		if ((REG_FLASH(ADDR_L) % 128) != 0)
+			goto err;
+
+		user_app_flag_set(0xff);
+
+		// Burn the code, we need to disable interrupts during write
+		//
+		// 1) unlock by writing 0xa9 0x7f to FLKEY
+		// 2) set HS pre-divider to /4
+		// 3) FLCR |= BIT(2) (if writing options)
+		// 4) MOVX data to area starting from the ROM address we want to
+		//    write
+		// 5) FLCR |= BIT(0) | BIT(1);
+		// 6) nop and wait for FLCR bits to clear
+		// 7) FLCR &= ~BIT(2), restore pre-divider (cleanup)
+		//
+		// FLCR:
+		// bit 0 = WE
+		// bit 1 = EE
+		// bit 2 = MEMSP
+		// bit 7 = EPEN (protection)
+		//
+		__critical {
+			PAGESW = 0;
+
+			uint8_t ckcon_saved = CKCON1;
+			CKCON1 = (CKCON1 & ~0x06u) | (1 << 1); // set HS pre-divider to /4
+
+			// unlock
+			P0_FLCR &= ~BIT(2);
+			P0_FLKEY = 0xA9;
+			P0_FLKEY = 0x7F;
+
+			__asm__ (
+				// dptr0 = source ptr, dptr1 = dest ptr
+				"push psw\n"
+				"push _DPL\n"
+				"push _DPH\n"
+				"push ar7\n"
+				"push A\n"
+
+				"mov _DPL1,_flash_regs\n"
+				"mov _DPH1,(_flash_regs + 1)\n"
+				"mov A,#_flash_content\n"
+				"mov _DPL,A\n"
+				"mov A,#(_flash_content >> 8)\n"
+				"mov _DPH,A\n"
+				"mov r7,#0\n" // counter
+
+				"00002$: movx a,@dptr\n"
+				"inc dptr\n"
+				"orl _PCON,#0x08\n" // select dptr1
+				"movx @dptr,a\n"
+				"inc dptr\n"
+				"anl _PCON,#0xf7\n" // select dptr0
+				"inc r7\n"
+				"cjne r7,#0x80,00002$\n"
+
+				"pop A\n"
+				"pop ar7\n"
+				"pop _DPH\n"
+				"pop _DPL\n"
+				"pop psw\n"
+			);
+
+			P0_FLCR |= BIT(0) | BIT(1);
+			__asm__("nop");
+			while (P0_FLCR & (BIT(0) | BIT(1))); // wait until programming is done
+
+			CKCON1 = ckcon_saved;
+		}
+	} else if (REG_FLASH(CMD) == REG_FLASH_CMD_COMMIT) {
+		user_app_flag_set(1);
+	} else if (REG_FLASH(CMD) == REG_FLASH_CMD_ERASE_ROM) {
+		user_app_flag_set(0xff);
+	} else {
+		goto err;
+	}
+
+	REG_FLASH(CMD) = 0;
+out:
+	REG_FLASH(UNLOCK) = 0;
+	flash_cmd_run = 0;
+	return;
+
+err:
+	REG_FLASH(CMD) = 0xff;
+	goto out;
+}
+
+#endif
+
+// }}}
+// {{{ Self-tests
+
+#if CONFIG_SELFTEST
+
+static void set_column_input(uint8_t col)
+{
+	if (col <= 2)
+		PAGESW = 1;
+	else
+		PAGESW = 0;
+
+	switch (col) {
+	case 0:  P1_P9M0 |= BIT(5); break;
+	case 1:  P1_P9M0 |= BIT(6); break;
+	case 2:  P1_P9M0 |= BIT(7); break;
+	case 3:  P0_P5M0 |= BIT(0); break;
+	case 4:  P0_P5M0 |= BIT(1); break;
+	case 5:  P0_P5M0 |= BIT(2); break;
+	case 6:  P0_P5M0 |= BIT(3); break;
+	case 7:  P0_P5M0 |= BIT(4); break;
+	case 8:  P0_P5M0 |= BIT(5); break;
+	case 9:  P0_P5M0 |= BIT(6); break;
+	case 10: P0_P5M0 |= BIT(7); break;
+	case 11: P0_P8M0 |= BIT(0); break;
+	}
+}
+
+static void set_column_output(uint8_t col)
+{
+	if (col <= 2)
+		PAGESW = 1;
+	else
+		PAGESW = 0;
+
+	switch (col) {
+	case 0:  P1_P9M0 &= ~BIT(5); break;
+	case 1:  P1_P9M0 &= ~BIT(6); break;
+	case 2:  P1_P9M0 &= ~BIT(7); break;
+	case 3:  P0_P5M0 &= ~BIT(0); break;
+	case 4:  P0_P5M0 &= ~BIT(1); break;
+	case 5:  P0_P5M0 &= ~BIT(2); break;
+	case 6:  P0_P5M0 &= ~BIT(3); break;
+	case 7:  P0_P5M0 &= ~BIT(4); break;
+	case 8:  P0_P5M0 &= ~BIT(5); break;
+	case 9:  P0_P5M0 &= ~BIT(6); break;
+	case 10: P0_P5M0 &= ~BIT(7); break;
+	case 11: P0_P8M0 &= ~BIT(0); break;
+	}
+}
+
+static __bit get_column_value(uint8_t col)
+{
+	switch (col) {
+	case 0:  return P95;
+	case 1:  return P96;
+	case 2:  return P97;
+	case 3:  return P50;
+	case 4:  return P51;
+	case 5:  return P52;
+	case 6:  return P53;
+	case 7:  return P54;
+	case 8:  return P55;
+	case 9:  return P56;
+	case 10: return P57;
+	case 11: return P80;
+	default: return 0;
+	}
+}
+
+static void set_column_value(uint8_t col, __bit val)
+{
+	switch (col) {
+	case 0:  P95 = val; break;
+	case 1:  P96 = val; break;
+	case 2:  P97 = val; break;
+	case 3:  P50 = val; break;
+	case 4:  P51 = val; break;
+	case 5:  P52 = val; break;
+	case 6:  P53 = val; break;
+	case 7:  P54 = val; break;
+	case 8:  P55 = val; break;
+	case 9:  P56 = val; break;
+	case 10: P57 = val; break;
+	case 11: P80 = val; break;
+	}
+}
+
+static void self_test_run(void)
+{
+	PAGESW = 0;
+
+	// all rows pull-up already as a defauklt config, so set all columns
+	// to hi-Z first
+	P0_P5M0 = ~0x00u;
+	P0_P8M0 |= ~0xfeu;
+
+	PAGESW = 1;
+	P1_P9M0 |= ~0x1fu;
+
+	// for each column:
+	// - output low
+	// - read other columns
+	// - turn column back to hi-Z
+	// data output:
+	// - list of columns shorted together in 2 byte sequences as a bitmask
+	//   - first byte: cols 12-9 aligned to LSB
+	//   - second byte: cols 8-1
+	// - terminated by two-byte 00 00 sequence
+
+	puts("column self-test:\n");
+
+	for (uint8_t c1 = 0; c1 < 12; c1++) {
+                set_column_output(c1);
+
+		for (uint8_t c2 = c1 + 1; c2 < 12; c2++) {
+			set_column_value(c1, 0);
+			__bit a = get_column_value(c2);
+			set_column_value(c1, 1);
+			__bit b = get_column_value(c2);
+
+			if (!a && b) {
+				// column-column short found
+				puts("c-c short: ");
+				put_uint(c1);
+				puts("  ");
+				put_uint(c2);
+				puts("\n");
+			}
+		}
+
+		set_column_input(c1);
+	}
+
+	puts("done\n");
+}
+
+#endif
+
+// }}}
+// {{{ System commands
+
+#define REG_SYS(n) ctl_regs[REG_SYS_##n - REG_SYS_CONFIG]
+
+static void exec_system_command(void)
+{
+	if (!sys_cmd_run)
+		return;
+
+	if (REG_SYS(COMMAND) == 0 || REG_SYS(COMMAND) == 0xff)
+		goto out_done;
+
+	if (REG_SYS(COMMAND) == REG_SYS_COMMAND_MCU_RESET) {
+		RSTSC &= ~BIT(7);
+		RSTSC |= BIT(7);
+#if CONFIG_SELFTEST
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_SELFTEST) {
+		self_test_run();
+#endif
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_USB_IAP) {
+		jump_to_usb_bootloader = 1;
+	} else {
+		REG_SYS(COMMAND) = 0xff;
+		goto out_done;
+	}
+
+	REG_SYS(COMMAND) = 0x00;
+out_done:
+	sys_cmd_run = 0;
+}
+
+// }}}
+// {{{ I2C register access
+
+// only call this in interrupt context from regbank 1!
+static uint8_t reg_get_value(void) __using(1)
+{
+#if CONFIG_DEBUG_LOG
+	// read from this register reads the next byte of log buffer
+	// (register address is not advanced!)
+	if (reg_addr == 0xff) {
+		if (log_start != log_end) {
+			log_start = (log_start + 1) % 1024;
+			return log_buffer[log_start]; // push data to fifo
+		}
+
+		goto none;
+	}
+#endif
+
+	if (reg_addr <= REG_KEYMATRIX_STATE_END) {
+		return ro_regs[reg_addr];
+	} else if (reg_addr < REG_SYS_CONFIG) {
+		goto none;
+	} else if (reg_addr <= REG_SYS_USER_APP_BLOCK) {
+		return ctl_regs[reg_addr - REG_SYS_CONFIG];
+#if CONFIG_FLASH_ENABLE
+	} else if (reg_addr < REG_FLASH_DATA_START) {
+		goto none;
+	} else if (reg_addr <= REG_FLASH_DATA_END) {
+		return flash_content[reg_addr - REG_FLASH_DATA_START];
+	} else if (reg_addr <= REG_FLASH_CMD) {
+		return flash_regs[reg_addr - REG_FLASH_ADDR_L];
+#endif
+	}
+
+none:
+	return 0;
+}
+
+// only call this in interrupt context from regbank 1!
+static void reg_set_value(uint8_t val) __using(1)
+{
+	if (reg_addr < REG_SYS_CONFIG) {
+		return;
+	} else if (reg_addr <= REG_SYS_USER_APP_BLOCK) {
+		if (reg_addr == REG_SYS_COMMAND) {
+			if (sys_cmd_run)
+				return;
+			sys_cmd_run = 1;
+		}
+
+		ctl_regs[reg_addr - REG_SYS_CONFIG] = val;
+#if CONFIG_FLASH_ENABLE
+	} else if (reg_addr < REG_FLASH_DATA_START) {
+		return;
+	} else if (reg_addr <= REG_FLASH_DATA_END) {
+		if (flash_cmd_run)
+			return;
+		flash_content[reg_addr - REG_FLASH_DATA_START] = val;
+	} else if (reg_addr <= REG_FLASH_CMD) {
+		if (flash_cmd_run)
+			return;
+
+		flash_regs[reg_addr - REG_FLASH_ADDR_L] = val;
+
+		if (reg_addr == REG_FLASH_CMD)
+			flash_cmd_run = 1;
+#endif
+	}
+}
 
 /*
  * Host write transaction: sending 01 02 03 04 to device at 0x15 (0x2a == 0x15 << 1)
@@ -361,8 +1076,8 @@ static uint8_t i2c_rx_buf[I2C_N_REGS];
  * int=a0 CR1=8d CR2=af tx
  * int=a0 CR1=8d CR2=af tx
  * int=a0 CR1=8d CR2=af tx
- * int=a0 CR1=89 CR2=af tx
- * int=b0 CR1=08 CR2=2f stop
+ * int=a0 CR1=89 CR2=af tx   NACK from host (last read byte)
+ * int=b0 CR1=08 CR2=2f stop  STOP condition reported
  *
  * CR1:
  * 7: STROBE/PEND   (RX/TX: not set on stop IRQ, even though RXSF/TXSF is also set)
@@ -391,62 +1106,66 @@ static uint8_t i2c_rx_buf[I2C_N_REGS];
  */
 
 #define I2C_ADDR 0x15
-#define I2C_DEBUG 0
 
-void i2c_b_interupt(void) __interrupt(IRQ_I2CB)
+static volatile uint8_t i2c_n = 0;
+
+// interrupt needs to be enabled for wakeup from powerdown to work
+void i2c_b_interrupt(void) __interrupt(IRQ_I2CB) __using(1)
 {
 	uint8_t saved_page = PAGESW;
 	PAGESW = 0;
 
-#if I2C_DEBUG
-	puts("i2cb int=");
-	put_hex_b(P0_I2CBINT);
-	puts(" CR1=");
-	put_hex_b(P0_I2CBCR1);
-	puts(" CR2=");
-	put_hex_b(P0_I2CBCR2);
-	puts("\n");
-#endif
+	uint8_t intf = P0_I2CBINT;
+	uint8_t cr1 = P0_I2CBCR1;
+	uint8_t cr2 = P0_I2CBCR2;
 
 	// handle stop condition
-	if (P0_I2CBINT & BIT(4)) {
-		if (i2c_rx_cnt) {
-			//XXX: process received data
-
-			puts("I2C RX: ");
-			for (uint8_t i = 0; i < i2c_rx_cnt; i++)
-				put_hex_b(i2c_rx_buf[i]);
-			puts("\n");
-		}
-
-		i2c_tx_cnt = 0;
-		i2c_rx_cnt = 0;
-		goto out_ack;
+	if (intf & BIT(4)) {
+		i2c_n = 0;
+		P0_I2CBINT &= ~(BIT(4) | BIT(6) | BIT(7));
+		goto out_restore_page;
 	}
 
-	// handle TX
-	if (P0_I2CBINT & BIT(7)) {
-		if (i2c_tx_cnt < I2C_N_REGS)
-			P0_I2CBDB = i2c_tx_buf[i2c_tx_cnt++];
-		else
-			P0_I2CBDB = 0xff;
+	// handle TX (byte to be sent to master - this is timing sensitive!)
+	if (intf & BIT(7)) {
+		// previous TX was the last byte
+		if (!(cr1 & BIT(2)))
+			goto tx_ack;
 
-		goto out_ack;
+		P0_I2CBDB = reg_get_value();
+		if (reg_addr != 0xff)
+			reg_addr++;
+
+		i2c_n++;
+tx_ack:
+		P0_I2CBINT &= ~BIT(7);
+		goto out_restore_page;
 	}
 
-	// handle RX
-	if (P0_I2CBINT & BIT(6)) {
-		uint8_t empty = P0_I2CBCR1 & BIT(1);
+	// handle RX (byte received from master)
+	if (intf & BIT(6)) {
 		uint8_t tmp = P0_I2CBDB;
 
-		if (empty && i2c_rx_cnt < I2C_N_REGS)
-			i2c_rx_buf[i2c_rx_cnt++] = tmp;
+		// first RX byte is device address, determined by !FULL flag
+		if (!(cr1 & BIT(1)))
+			goto rx_ack;
 
-		goto out_ack;
+		// set address
+		if (i2c_n++ == 0) {
+			reg_addr = tmp;
+			goto rx_ack;
+		}
+
+		// set reg data
+		reg_set_value(tmp);
+		reg_addr++;
+
+rx_ack:
+		P0_I2CBINT &= ~BIT(6);
+		goto out_restore_page;
 	}
 
-out_ack:
-	P0_I2CBINT &= ~(BIT(4) | BIT(7) | BIT(6));
+out_restore_page:
 	P0_I2CBCR1 &= ~BIT(7); // clear data pending
 	PAGESW = saved_page;
 }
@@ -470,7 +1189,7 @@ void i2c_slave_init(void)
 	P0_I2CBCR2 = 0x07 << 1 | BIT(0);  // 100kHz mode, enable I2C B controller, enable
 
 	// setup I2C address
-	P0_I2CBDAH = 0x00;
+	P0_I2CBDAH = 0;
 	P0_I2CBDAL = I2C_ADDR;
 
 	P0_I2CBINT = BIT(5); // enable I2C B stop interrupt
@@ -478,81 +1197,29 @@ void i2c_slave_init(void)
 }
 
 // }}}
-// {{{ USB
+// {{{ USB debugging interface
 
-enum {
-	UDC_EP_CONTROL = 0,
-	UDC_EP_ISO,
-	UDC_EP_BULK,
-	UDC_EP_INTERRUPT,
-};
+#if CONFIG_USB_STACK
 
-#define UDC_EP_CONF(conf, intf, alt, type) \
-        (conf << 6) | (intf << 4) | (alt << 2) | type
-#define UDC_EP_OUT_CONF(ep1, ep2, ep3, ep4) \
-	ep4 | (ep3 << 2) | (ep2 << 4) | (ep1 << 6)
+#if USB_DEBUG
 
-static const uint8_t udc_config[5] = {
-	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
-	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
-	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
-	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
-	UDC_EP_OUT_CONF(UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT),
-};
+#define usb_putc(a)      putc(a)
+#define usb_puts(a)      puts(a)
+#define usb_put_hex_b(a) put_hex_b(a) 
+#define usb_put_hex_w(a) put_hex_w(a)
+#define usb_put_hex_n(a) put_hex_n(a)
+#define usb_put_uint(a)  put_uint(a)
 
-static void usb_disable(void)
-{
-	// reset phy/usb
-	PAGESW = 1;
-	P1_PHYTEST0 &= ~BIT(6); // phy disable
-	P1_UDCCTRL &= ~BIT(6); // udc disable
-}
+#else
 
-static void usb_init(void)
-{
-	PAGESW = 1;
-	P1_UDCCTRL |= BIT(6); // udc enable
-	// wait for UDC to complete initialization
-	while (!(P1_UDCCTRL & BIT(1)));
-	__asm__("nop");
+#define usb_putc(a)
+#define usb_puts(a)
+#define usb_put_hex_b(a)
+#define usb_put_hex_w(a)
+#define usb_put_hex_n(a)
+#define usb_put_uint(a)
 
-	// setup USB EP depths
-	P1_UDCEP1BUFDEPTH = 64 - 1;
-	P1_UDCEP2BUFDEPTH = 64 - 1;
-	P1_UDCEP3BUFDEPTH = 64 - 1;
-	P1_UDCEP4BUFDEPTH = 64 - 1;
-	__asm__("nop");
-	__asm__("nop");
-
-	// configure UDC
-	for (uint8_t i = 0; i < 4; i++) {
-		P1_UDCCFDATA = udc_config[i];
-
-		while (!(P1_UDCCFSTA & BIT(7)));
-		while (P1_UDCCFSTA & BIT(7));
-	}
-
-	P1_UDCCFDATA = udc_config[4];
-	while (!(P1_UDCCFSTA & BIT(6)));
-
-	// enable USB
-	P1_USBCTRL |= BIT(6);
-
-	P1_UDCINT0EN = 0;
-	P1_UDCINT1EN = 0;
-	P1_UDCINT2EN = 0;
-	P1_UDCEPCTRL = 0xf;
-	P1_UDCINT0STA = 0;
-	P1_UDCINT1STA = 0;
-	P1_UDCINT2STA = 0;
-
-	// enable phy
-	P1_PHYTEST0 |= BIT(5) | BIT(6);
-	__asm__("nop");
-	__asm__("nop");
-
-	PAGESW = 0;
-}
+#endif
 
 #define USB_ID(w) (uint16_t)w & 0xff, ((uint16_t)w >> 8)
 #define USB_BCD(a, b) b, a
@@ -641,16 +1308,17 @@ static const uint8_t * const usb_strings[] = {
 	usb_string_product,
 };
 
-static uint16_t usb_ep0_in_remaining;
-static uint8_t const*  usb_ep0_in_ptr;
+static uint16_t usb_ep0_in_remaining = 0;
+static uint8_t const* usb_ep0_in_ptr;
 static uint8_t usb_command_status = 0;
-static uint8_t usb_key_change = 0;
 static uint8_t usb_command[8];
 static uint8_t usb_response[8];
+static volatile __bit usb_key_change = 0;
 
-static void usb_tasks(void)
+static void usb_tasks(void) __using(1)
 {
 	uint8_t buf[8];
+	uint8_t saved_page = PAGESW;
 
 	PAGESW = 1;
 
@@ -671,10 +1339,7 @@ static void usb_tasks(void)
 
 		//XXX: what about others?
                 //XXX: reset software variables...
-
-		EA = 0;
-		puts("usb reset int\n");
-		EA = 1;
+		usb_puts("usb rst\n");
 
 		// ack reset request
 		P1_UDCINT0STA &= ~BIT(5);
@@ -682,12 +1347,21 @@ static void usb_tasks(void)
 
 	// ep0 setup request received
 	if (P1_UDCINT0STA & BIT(1)) {
+		usb_puts("ep0 su: ");
+
 		// buf: bReqType bReq wVal(l/h) wIndex wLength
-		for (uint8_t i = 0; i < 8; i++)
+		for (uint8_t i = 0; i < 8; i++) {
 			buf[i] = P1_UDCEP0BUFDATA;
+			usb_put_hex_b(buf[i]);
+		}
+
+		usb_puts("\n");
+
+		//P1_UDCEPBUF0CTRL |= BIT(0);
+		//P1_UDCEPBUF0CTRL &= ~BIT(0);
 
 		// how much data to send to ep0 in
-		usb_ep0_in_remaining = (uint16_t)((buf[7] << 8) | buf[6]);
+		usb_ep0_in_remaining = (((uint16_t)buf[7] << 8) | buf[6]);
 		uint16_t in0_len = 0;
 
 		// standard commands
@@ -732,38 +1406,46 @@ ack_ep0_setup:
 
 	// USB host initiated EP0 IN transfer
 	if (P1_UDCINT1STA & BIT(0)) {
+		// ack interrupt
+		P1_UDCINT1STA &= ~BIT(0);
+
 		// check if we're ready to send to ep0
-		if (!(P1_UDCEPBUF0CTRL & BIT(1))) {
+		if (!(P1_UDCEPBUF0CTRL & BIT(1)) && (P1_UDCBUFSTA & BIT(0))) {
 			// if ep0 in buffer not empty, clear it first
-			if (!(P1_UDCBUFSTA & BIT(0))) {
+			//if (!(P1_UDCBUFSTA & BIT(0))) {
 				// clear ep0 buffer
-				P1_UDCEPBUF0CTRL |= BIT(0);
-				P1_UDCEPBUF0CTRL &= ~BIT(0);
-			}
+				//P1_UDCEPBUF0CTRL |= BIT(0);
+				//P1_UDCEPBUF0CTRL &= ~BIT(0);
+			//}
+
+			usb_puts("ep0 in: ptr=");
+			usb_put_hex_w((uint16_t)usb_ep0_in_ptr);
+			usb_puts(" rem=");
+			usb_put_hex_w(usb_ep0_in_remaining);
+			usb_puts(" ");
 
 			for (uint8_t n = 0; n < 64; n++) {
-				// push data to EP0 in (max 8 bytes)
+				// push data to EP0 in (max 64 bytes)
 				if (usb_ep0_in_remaining > 0) {
 					usb_ep0_in_remaining--;
+					usb_put_hex_b(*usb_ep0_in_ptr);
 					P1_UDCEP0BUFDATA = *usb_ep0_in_ptr++;
 				} else {
 					break;
 				}
 			}
 
+			usb_puts("\n");
+
 			// confirm sending data
 			P1_UDCEPBUF0CTRL |= BIT(1);
-			// ack interrupt
-			P1_UDCINT1STA &= ~BIT(0);
 		}
 	}
 
 	// data received on ep0 out
 	if (P1_UDCINT1STA & BIT(1)) {
+		usb_puts("ep0 out\n");
 		// we don't handle any control transfers that send us data
-		EA = 0;
-		puts("usb EP0 OUT int\n");
-		EA = 1;
 
 		// reset ep0 buf
 		P1_UDCEPBUF0CTRL |= BIT(0);
@@ -786,6 +1468,7 @@ ack_ep0_setup:
 		for (uint8_t i = 0; i < 8; i++)
 			usb_command[i] = P1_UDCEP1BUFDATA;
 		usb_command_status = 1;
+		usb_puts("ep1 out\n");
 
 		P1_UDCINT1STA &= ~BIT(3);
 
@@ -807,10 +1490,7 @@ ack_ep0_setup:
 
                 if (usb_command[0] == 0x01) {
 			// bootloader mode
-			EA = 0;
-			__asm__("mov r6,#0x5a");
-			__asm__("mov r7,#0xe7");
-			__asm__("ljmp 0x0118");
+			jump_to_usb_bootloader = 1;
 		} else {
 			// command unknown
 			usb_response[1] = 1;
@@ -838,20 +1518,25 @@ ack_ep0_setup:
 
 	// USB host initiated EP3 IN transfer
 	if (P1_UDCINT1STA & BIT(6)) {
-		// push printf debug buffer to ep3 in
-		if (!(P1_UDCEPBUF0CTRL & BIT(7)) && log_start != log_end) {
-	                uint8_t cnt = 0;
+#if CONFIG_DEBUG_LOG
+		// all log_* variables need to be accessed with interrupts
+		// disabled
+		__critical {
+			// push printf debug buffer to ep3 in
+			if (!(P1_UDCEPBUF0CTRL & BIT(7)) && log_start != log_end) {
+				uint8_t cnt = 0;
 
-			while (cnt < 64 && log_start != log_end) {
-				log_start = (log_start + 1) % 1024;
-				P1_UDCEP3BUFDATA = log_buffer[log_start]; // push data to fifo
-				cnt++;
+				while (cnt < 64 && log_start != log_end) {
+					log_start = (log_start + 1) % 1024;
+					P1_UDCEP3BUFDATA = log_buffer[log_start]; // push data to fifo
+					cnt++;
+				}
+
+				P1_UDCEP3DATAINCNT = cnt - 1;
+				P1_UDCEPBUF0CTRL |= BIT(7); // EP3 data ready
 			}
-
-			P1_UDCEP3DATAINCNT = cnt - 1;
-			P1_UDCEPBUF0CTRL |= BIT(7); // EP3 data ready
 		}
-
+#endif
 		// ack
 		P1_UDCINT1STA &= ~BIT(6);
 	}
@@ -861,7 +1546,7 @@ ack_ep0_setup:
 		// push key change events to ep4 in
 		if (!(P1_UDCEPBUF1CTRL & BIT(1)) && usb_key_change) {
 			for (uint8_t i = 0; i < 12; i++)
-				P1_UDCEP4BUFDATA = i2c_tx_buf[i + 4];
+				P1_UDCEP4BUFDATA = ro_regs[i + REG_KEYMATRIX_STATE];
 
 			P1_UDCEP4DATAINCNT = 12 - 1;
 			P1_UDCEPBUF1CTRL |= BIT(1); // EP4 data ready
@@ -874,24 +1559,123 @@ ack_ep0_setup:
 
 	// suspend request
 	if (P1_UDCINT0STA & BIT(6)) {
-		EA = 0;
-		puts("usb suspend int\n");
-		EA = 1;
+		usb_puts("usb suspend\n");
+
+                // host requests suspend, we satisfy it
+
+		// clear device resume request bit, we can set it later to wake
+		// the host / resume USB activity
+		P1_UDCCTRL &= ~BIT(5);
 
 		// ack
 		P1_UDCINT0STA &= ~BIT(6);
-
-                //XXX: handle suspend properly
-
-		// suspend UDC
-		P1_UDCCTRL &= ~BIT(5);
 	}
+
+	// resume request
+	if (P1_UDCINT0STA & BIT(3)) {
+		usb_puts("usb resume\n");
+
+		// ack
+		P1_UDCINT0STA &= ~BIT(3);
+	}
+
+	PAGESW = saved_page;
 }
+
+void usb_interrupt(void) __interrupt(IRQ_USB) __using(1)
+{
+	usb_tasks();
+}
+
+enum {
+	UDC_EP_CONTROL = 0,
+	UDC_EP_ISO,
+	UDC_EP_BULK,
+	UDC_EP_INTERRUPT,
+};
+
+#define UDC_EP_CONF(conf, intf, alt, type) \
+        (conf << 6) | (intf << 4) | (alt << 2) | type
+#define UDC_EP_OUT_CONF(ep1, ep2, ep3, ep4) \
+	ep4 | (ep3 << 2) | (ep2 << 4) | (ep1 << 6)
+
+static const uint8_t udc_config[5] = {
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_CONF(1, 0, 0, UDC_EP_INTERRUPT),
+	UDC_EP_OUT_CONF(UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT, UDC_EP_INTERRUPT),
+};
+
+static void usb_init(void)
+{
+	PAGESW = 1;
+
+	P1_UDCCTRL |= BIT(6); // udc enable
+	// wait for UDC to complete initialization
+	while (!(P1_UDCCTRL & BIT(1)));
+	__asm__("nop");
+
+	// setup USB EP depths
+	P1_UDCEP1BUFDEPTH = 64 - 1;
+	P1_UDCEP2BUFDEPTH = 64 - 1;
+	P1_UDCEP3BUFDEPTH = 64 - 1;
+	P1_UDCEP4BUFDEPTH = 64 - 1;
+	__asm__("nop");
+	__asm__("nop");
+
+	// configure UDC
+	for (uint8_t i = 0; i < 4; i++) {
+		P1_UDCCFDATA = udc_config[i];
+
+		while (!(P1_UDCCFSTA & BIT(7)));
+		while (P1_UDCCFSTA & BIT(7));
+	}
+
+	P1_UDCCFDATA = udc_config[4];
+	while (!(P1_UDCCFSTA & BIT(6)));
+
+	// enable USB EPRDY
+	P1_USBCTRL |= BIT(6);
+
+	P1_UDCEPCTRL = 0xf;
+	P1_UDCINT0STA = 0;
+	P1_UDCINT1STA = 0;
+	P1_UDCINT2STA = 0;
+
+	P1_UDCINT0EN = BIT(5) | BIT(1) | BIT(6) | BIT(3);
+	P1_UDCINT1EN = BIT(0) | BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(6);
+	P1_UDCINT2EN = BIT(2);
+	//P1_UDCINT0EN = 0;
+	//P1_UDCINT1EN = 0;
+	//P1_UDCINT2EN = 0;
+
+	// enable phy, wakeup enable
+	P1_PHYTEST0 |= BIT(5) | BIT(6);
+	__asm__("nop");
+	__asm__("nop");
+
+	PAGESW = 0;
+
+	// enable USB interrupts
+	P0_EIE2 |= BIT(2);
+}
+
+#endif
+
+static void usb_disable(void)
+{
+	// reset phy/usb
+	PAGESW = 1;
+
+	P1_PHYTEST0 &= ~(BIT(6) | BIT(5)); // phy disable
+	P1_UDCCTRL &= ~BIT(6); // udc disable
+}
+
+// }}}
 
 void main(void)
 {
-	uint8_t scan_active = 0;
-
 	PAGESW = 0;
 
 	// setup interrupts
@@ -919,6 +1703,9 @@ void main(void)
 	// enable both timers
 	TCON = 0x50;
 
+	// protect FLASH from 0x0000 to 0x4000 from being accessed by code at 0x4000+
+	P0_EPPOINTL = 0x80;
+
 	// setup watchdog (timer base is 8ms, prescaler sets up timeout /128 = ~1s)
 //	P0_WDTCR = 0x87; // enable watchdog ~1s
 //	P0_WDTKEY = 0x4e; // reset watchdog
@@ -937,7 +1724,7 @@ void main(void)
 	// enable pullups only all port 6 pins and make those pins into input
 	PAGESW = 0;
 	P0_PHCON0 = 0x00;
-	P0_PHCON1 = 0xff; // port 6 pull-up enable
+	P0_PHCON1 = 0xffu; // port 6 pull-up enable
 	P0_P6M0 = 0xff; // port 6 input
 	PAGESW = 1;
 	P1_PHCON2 = 0x00;
@@ -945,7 +1732,11 @@ void main(void)
 	// enable auto-tuning internal RC oscillator based on USB SOF packets
 	P1_IRCCTRL &= ~BIT(1); // disable manual trim
 
-	puts("ppkb firmware 0.1\n");
+#if CONFIG_STOCK_FW
+	puts("ppkb firmware " FW_REVISION_STR " (stock)\n");
+#else
+	puts("ppkb firmware " FW_REVISION_STR " (user)\n");
+#endif
 
 	i2c_slave_init();
 
@@ -953,94 +1744,173 @@ void main(void)
 
 	usb_disable();
 
+#if !CONFIG_USB_STACK
+	PAGESW = 1;
+
+	// GPIO on USB pins
+	P1_USBCTRL &= ~BIT(7);
+
+	// turn off PLL48
+	P1_UDCCTRL |= BIT(0);
+
+	// turn off unused USB resources (phy power down, PLL48 powerdown
+	P1_USBCTRL |= BIT(0) | BIT(1);
+
+	// enable auto-tuning internal RC oscillator based on USB SOF packets
+	P1_IRCCTRL |= BIT(1); // enable manual trim
+#endif
+
+#if CONFIG_FLASH_ENABLE
+	for (uint8_t i = 0; i < 128; i++)
+		flash_content[i] = 0;
+#endif
+
 	// enable interrupts
 	ET1 = 1;
 	EA = 1;
 	ext_int_deassert();
 
-#if POLL_INPUT
-	keyscan_active();
-#else
 	keyscan_idle();
-#endif
-	uint8_t asserted = 0;
-	uint8_t usb_initialized = 0;
+
+	__bit usb_initialized = 0;
+	__bit user_app_checked = 0;
 	uint16_t ticks = 0;
 	while (1) {
-		if (usb_initialized)
-			usb_tasks();
+		// execute I2C system/flashing commands, once the I2C
+		// transaction ends, as soon as possible
+		if (i2c_n == 0) {
+			exec_system_command();
 
-		if (!run_tasks) {
-			// power down (timers don't work in power-down)
-			//PCON |= BIT(1);
-			// go to idle CPU mode when there's nothing to do (doesn't help much)
-			// switching to LOSC may work better
-			//PCON |= BIT(0);
+#if CONFIG_FLASH_ENABLE
+			exec_flashing_command();
+#endif
+		}
 
-			__asm__("nop");
+		// if we were asked to jump to USB IAP, do it
+		if (jump_to_usb_bootloader)
+			__asm__ ("ljmp _usb_bootloader_jump");
+
+		// if the 20ms timer did not expire yet, check if we can
+		// powerdown, otherwise busyloop
+		if (!run_timed_tasks) {
+#if CONFIG_USB_STACK
+			PAGESW = 1;
+			__bit usb_suspended = !!(P1_UDCCTRL & BIT(2));
+#endif
+			PAGESW = 0;
+			__bit i2c_idle = !(P0_I2CBCR2 & BIT(7)) && i2c_n == 0;
+
+			// if USB is suspended by host and I2C has no activity,
+			// and we're not in active scanning mode, power down the MCU
+			if (i2c_idle && !scan_active
+			    && !p6_changed
+#if CONFIG_USB_STACK
+			    && usb_initialized  && usb_suspended
+#endif
+#if CONFIG_STOCK_FW
+			    && user_app_checked
+#endif
+			    ) {
+				// go to idle CPU mode when there's nothing to
+				// do, any interrupt will wake us
+				//PCON |= BIT(0);
+
+				// enable interrupt whenever P6 is different
+				// from the current value (which would be
+				// whenever some key is pressed, because by
+				// default all pins on P6 are pulled high)
+				//
+				// input change detection works by comparing the
+				// pin state against the P6 latch for output
+				p6_changed = 0;
+				P6 = P6;
+				P0_ICEN = BIT(5);
+				ICIE = 1;
+
+				// power down (timers don't work in power-down)
+				PCON |= BIT(1) | BIT(0);
+				__asm__("nop");
+
+				// we may not be woken up only by IC interrupt, so
+				// disable IC interrupts after each wakeup
+				ICIE = 0;
+
+#if CONFIG_USB_STACK
+				// if we were woken up by USB host, USBCTRL.5
+				// will be set, clear it
+				PAGESW = 1;
+				if (!(P1_UDCCTRL & BIT(2)))
+					P1_USBCTRL &= ~BIT(5);
+#endif
+			}
+
 			continue;
 		}
 
+		// every 20ms we will get here to perform some timed tasks
 		ticks++;
-		run_tasks = 0;
+		run_timed_tasks = 0;
 
-		// usb init needs to run after 500ms
-		if (ticks > 500 / 20 && !usb_initialized) {
+#if CONFIG_STOCK_FW
+		// after 1s check if we should jump to user firmware
+		if (!user_app_checked && ticks > 1000 / 20) {
+			if (app_flag == 1 && ctl_regs[REG_SYS_USER_APP_BLOCK - REG_SYS_CONFIG] != REG_SYS_USER_APP_BLOCK_MAGIC)
+				jmp_to_user_fw();
+
+			user_app_checked = 1;
+		}
+#endif
+
+#if CONFIG_USB_STACK
+		// after 500ms, init usb
+		if (!usb_initialized && ticks > 500 / 20) {
 			usb_init();
 			usb_initialized = 1;
 		}
-
-#if POLL_INPUT
-		// every 20ms we will scan the keyboard keys state and check for changes
-		uint8_t keys[12];
-		uint8_t active_rows = keyscan_scan(keys);
-
-		// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
-		if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2)) {
-			EA = 0;
-			__asm__("mov r6,#0x5a");
-			__asm__("mov r7,#0xe7");
-			__asm__("ljmp 0x0118");
-		}
-
-		// check for changes
-		if (!memcmp(i2c_tx_buf + 4, keys, 12))
-			continue;
-
-		// signal interrupt
-		memcpy(i2c_tx_buf + 4, keys, 12);
-		ext_int_assert();
-		delay_us(100);
-		ext_int_deassert();
-		usb_key_change = 1;
-#else
-		//XXX: not figured out yet, not tested, not working
-		if (scan_active) {
-			uint8_t active_rows = keyscan_scan(i2c_tx_buf + 4);
-			if (!active_rows) {
-				scan_active = 0;
-				keyscan_idle();
-
-				// power down
-				//PCON |= BIT(1);
-				//__asm__("nop");
-			}
-
-			// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
-			if (i2c_tx_buf[4 + 0] & BIT(2) && i2c_tx_buf[4 + 2] & BIT(5) && i2c_tx_buf[4 + 4] & BIT(2)) {
-				EA = 0;
-				__asm__("mov r6,#0x5a");
-				__asm__("mov r7,#0xe7");
-				__asm__("ljmp 0x0118");
-			}
-
-			continue;
-		}
-
-		if (keyscan_idle_is_pressed()) {
-			scan_active = 1;
-			keyscan_active();
-		}
 #endif
+
+		// if active scanning is not active and port 6 change was
+		// detected, and some key is still pressed, enter active
+		// scanning mode
+		if (!scan_active && keyscan_idle_is_pressed())
+			keyscan_active();
+
+		// if we're in active scanning, scan the keys, and report
+		// new state
+		if (scan_active) {
+			uint8_t keys[12];
+			uint8_t active_rows = keyscan_scan(keys);
+
+			// check for changes
+			if (memcmp(ro_regs + REG_KEYMATRIX_STATE, keys, 12)) {
+				// update regs
+				__critical {
+					memcpy(ro_regs + REG_KEYMATRIX_STATE, keys, 12);
+					ro_regs[REG_KEYMATRIX_STATE_CRC8] = crc8(ro_regs + REG_KEYMATRIX_STATE, 12);
+				}
+
+				// signal interrupt
+				ext_int_assert();
+				delay_us(100);
+				ext_int_deassert();
+#if CONFIG_USB_STACK
+				usb_key_change = 1;
+
+				// USB wakeup
+				PAGESW = 1;
+				if (P1_UDCCTRL & BIT(2)) {
+					P1_UDCCTRL |= BIT(5);
+					P1_UDCCTRL &= ~BIT(5);
+				}
+#endif
+
+				// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
+				if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2))
+					jump_to_usb_bootloader = 1;
+			}
+
+			if (!active_rows)
+				keyscan_idle();
+		}
 	}
 }
