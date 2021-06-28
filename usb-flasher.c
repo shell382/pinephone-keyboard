@@ -591,7 +591,7 @@ int main(int ac, char* av[])
 {
 	char* rom_in = NULL;
 	char* rom_out = NULL;
-	int size = 0x1200;
+	int size = 0x2000;
 	int ret;
 
 	while (1) {
