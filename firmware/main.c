@@ -1128,7 +1128,6 @@ void i2c_b_interrupt(void) __interrupt(IRQ_I2CB) __using(1)
 
 	uint8_t intf = P0_I2CBINT;
 	uint8_t cr1 = P0_I2CBCR1;
-	uint8_t cr2 = P0_I2CBCR2;
 
 	// handle stop condition
 	if (intf & BIT(4)) {
