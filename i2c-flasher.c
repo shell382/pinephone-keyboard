@@ -470,7 +470,7 @@ int main(int ac, char* av[])
 				read_rom_block(rd_rom + i, i);
 
 				if (memcmp(rd_rom + i, rom + i, 128)) {
-					printf("WARNING: Block 0x%04x write failed, retrying...\n");
+					printf("WARNING: Block 0x%04x write failed, retrying...\n", i);
 					error("Retries disabled");
 				}
 			}
