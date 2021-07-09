@@ -557,11 +557,11 @@ static const uint8_t crc8_0x7_table[] = {
 static uint8_t crc8(const uint8_t *pdata, size_t nbytes)
 {
 	unsigned int idx;
-	uint8_t crc = 0;
+	uint8_t crc = 0xff;
 
 	while (nbytes--) {
-		idx = (crc ^ *pdata);
-		crc = (crc8_0x7_table[idx]) & 0xff;
+		idx = crc ^ *pdata;
+		crc = crc8_0x7_table[idx];
 		pdata++;
 	}
 
