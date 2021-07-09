@@ -36,6 +36,9 @@
 #ifndef CONFIG_STOCK_FW
 #define CONFIG_STOCK_FW 1
 #endif
+#ifndef CONFIG_I2C_A
+#define CONFIG_I2C_A 1
+#endif
 
 #define USB_DEBUG 0
 
@@ -573,6 +576,8 @@ static uint8_t crc8(const uint8_t *pdata, size_t nbytes)
 
 #include "registers.h"
 
+#define REG_SYS(n) ctl_regs[REG_SYS_##n - REG_SYS_CONFIG]
+
 // all the variables are volatile because they can be accessed
 // from interrupt context of I2C interrupt handler
 
@@ -593,11 +598,14 @@ static volatile uint8_t __idata ro_regs[REG_KEYMATRIX_STATE_END + 1] = {
 #if CONFIG_STOCK_FW
 		REG_FW_FEATURES_STOCK_FW |
 #endif
+#if CONFIG_I2CA
+		REG_FW_FEATURES_I2CA |
+#endif
 		0,
 	[REG_KEYMATRIX_SIZE] = 0xc6, // 12 x 6
 };
 
-static volatile uint8_t ctl_regs[3] = {0, 0, 0};
+static volatile uint8_t ctl_regs[5] = {0, 0, 0, 0, 0};
 static volatile __bit sys_cmd_run = 0;
 
 static volatile uint8_t reg_addr = 0;
@@ -970,9 +978,137 @@ static void self_test_run(void)
 #endif
 
 // }}}
-// {{{ System commands
+// {{{ I2C A forwarding
 
-#define REG_SYS(n) ctl_regs[REG_SYS_##n - REG_SYS_CONFIG]
+#if CONFIG_I2C_A
+
+#define CHARGER_ADDR 0x75u
+
+// returns 1 on success
+static __bit poll_flag(uint8_t flag)
+{
+	// set timeout for the duration of single transfer at 100kHz + some
+	// slack for slave clock stretching
+	T0_SET_TIMEOUT(2 * 250); // 250us
+
+	while (!TF0) {
+		if (P0_I2CASF & flag) {
+			P0_I2CASF &= ~flag;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static __bit i2c_a_send_addr(uint8_t addr)
+{
+	P0_I2CASA = addr;
+
+        P0_I2CACR1 |= BIT(7); // strobe
+
+	if (!poll_flag(BIT(0)))
+		return 0;
+
+	if (!(P0_I2CACR1 & BIT(2))) // ACK
+		return 0;
+
+	return 1;
+}
+
+static __bit i2c_a_send_data(uint8_t data)
+{
+	P0_I2CADB = data;
+
+        P0_I2CACR1 |= BIT(7); // strobe
+
+	if (!poll_flag(BIT(0)))
+		return 0;
+
+	if (!(P0_I2CACR1 & BIT(2))) // ACK
+		return 0;
+
+	return 1;
+}
+
+static void i2c_a_stop(void)
+{
+        P0_I2CACR1 |= BIT(4); // stop
+	poll_flag(BIT(2));
+
+	// and finaly do a reset just in case
+	P0_I2CACR2 &= ~BIT(5);
+	P0_I2CACR2 |= BIT(5);
+}
+
+static uint8_t i2c_a_read(void)
+{
+	uint8_t status = 0xff;
+
+	// reset FSM
+	P0_I2CACR2 &= ~BIT(5);
+	P0_I2CACR2 |= BIT(5);
+
+	if (!i2c_a_send_addr(CHARGER_ADDR))
+		goto err;
+
+	if (!i2c_a_send_data(REG_SYS(I2CA_ADDR)))
+		goto err;
+
+	if (!i2c_a_send_addr(CHARGER_ADDR | BIT(0)))
+		goto err;
+
+        P0_I2CACR1 |= BIT(7) | BIT(4); // strobe + stop
+	if (!poll_flag(BIT(2))) // poll for stop bit
+		goto err;
+
+	// read received data
+	REG_SYS(I2CA_DATA) = P0_I2CBDB;
+
+	status = 0;
+err:
+	i2c_a_stop();
+	return status;
+}
+
+static uint8_t i2c_a_write(void)
+{
+	uint8_t status = 0xff;
+
+	// reset FSM
+	P0_I2CACR2 &= ~BIT(5);
+	P0_I2CACR2 |= BIT(5);
+
+	if (!i2c_a_send_addr(CHARGER_ADDR))
+		goto err;
+
+	if (!i2c_a_send_data(REG_SYS(I2CA_ADDR)))
+		goto err;
+
+	if (!i2c_a_send_data(REG_SYS(I2CA_DATA)))
+		goto err;
+
+	status = 0;
+err:
+	i2c_a_stop();
+	return status;
+}
+
+static void i2c_a_init(void)
+{
+	PAGESW = 0;
+
+	// un-powerdown I2CA
+	P0_DEVPD2 &= ~BIT(0);
+
+	P0_I2CACR1 = BIT(6); // master mode
+	P0_I2CACR2 = BIT(5) | 0x07 << 1 | BIT(0);  // 100kHz mode, enable
+}
+
+#endif
+
+// }}}
+// {{{ System commands
 
 static void exec_system_command(void)
 {
@@ -991,6 +1127,10 @@ static void exec_system_command(void)
 #endif
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_USB_IAP) {
 		jump_to_usb_bootloader = 1;
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_READ) {
+		REG_SYS(COMMAND) = i2c_a_read();
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_WRITE) {
+		REG_SYS(COMMAND) = i2c_a_write();
 	} else {
 		REG_SYS(COMMAND) = 0xff;
 		goto out_done;
@@ -1778,6 +1918,9 @@ void main(void)
 	puts("ppkb firmware " FW_REVISION_STR " (user)\n");
 #endif
 
+#if CONFIG_I2C_A
+	i2c_a_init();
+#endif
 	i2c_slave_init();
 
 	T1_SET_TIMEOUT(40000);
