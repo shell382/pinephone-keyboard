@@ -38,7 +38,7 @@ $(OUT)ppkb-i2c-selftest: i2c-selftest.c common.c
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) -o $@ $<
 
-$(OUT)fw-stock.bin $(OUT)fw-user.bin: firmware/em85f684a.h firmware/main.c firmware/build.sh firmware/bootloader.bin
+$(OUT)fw-stock.bin $(OUT)fw-user.bin: $(wildcard firmware/*.*)
 	@mkdir -p $(OUT)
 	cd firmware && ./build.sh
 	cp -f firmware/build/fw-stock.bin $(OUT)fw-stock.bin
