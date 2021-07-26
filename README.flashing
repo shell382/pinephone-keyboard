@@ -5,7 +5,7 @@ This method allows updating the stock firmware on the keyboard.
 
 Flashing tool ppkb-usb-flasher can be used to flash the firmware over USB.
 You'll have to solder USB cable to the keyboard controller board to be able
-to user this method.
+to use this method.
 
 For example to build and flash your own firmware you could run these
 commands:
@@ -54,11 +54,11 @@ from 0x2000 will be flashed. Use -s to specify how many bytes to write.
 Flashing over I2C
 =================
 
-This method users stock stock firmware's flashing interface to allow writing
-user's own firmware to the keyboard, while keeping the stock firmware intact.
+This method uses stock firmware's flashing interface to allow writing user's
+own firmware to the keyboard, while keeping the stock firmware intact.
 
 Stock firmware will remain present and available for future updates of the
-users fiwmare.
+users firmware.
 
 You can use this method without having to disassemble the keyboard, or
 solder anything.
