@@ -30,7 +30,7 @@ int bootloader_open(void)
 	// first check if keyboard USB device is available, if it is
 	// we need to first switch to bootloader mode
 
-	fd = open_usb_dev(0x04f3, 0x1812);
+	fd = open_usb_dev(0x04f3, 0x1910);
 	if (fd >= 0) {
 		printf("Found USB device for the vendor firmware, swithing to USB bootloader\n");
 
