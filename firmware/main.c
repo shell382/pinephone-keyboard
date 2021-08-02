@@ -212,21 +212,21 @@ static void jmp_to_user_fw(void) __naked
 // timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
 #define T0_SET_TIMEOUT(n) { \
 	TL0 = 0x00; \
-	TH0 = (0x10000u - n) >> 8; \
-	TL0 = (0x10000u - n) & 0xff; \
+	TH0 = (0x10000u - (n)) >> 8; \
+	TL0 = (0x10000u - (n)) & 0xff; \
 	}
 
 #define T1_SET_TIMEOUT(n) { \
 	TL1 = 0x00; \
-	TH1 = (0x10000u - n) >> 8; \
-	TL1 = (0x10000u - n) & 0xff; \
+	TH1 = (0x10000u - (n)) >> 8; \
+	TL1 = (0x10000u - (n)) & 0xff; \
 	}
 
 #define delay_us(n) { \
 	TL0 = 0x00; \
 	TF0 = 0; \
-	TH0 = (0x10000u - 2 * n) >> 8; \
-	TL0 = (0x10000u - 2 * n) & 0xff; \
+	TH0 = (0x10000u - 2 * (n)) >> 8; \
+	TL0 = (0x10000u - 2 * (n)) & 0xff; \
 	while (!TF0); \
 }
 
