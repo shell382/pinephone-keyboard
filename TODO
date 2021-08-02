@@ -1,21 +1,23 @@
 Firmware
 --------
 
-- implement I2C configuration options
-  - disable keyboard matrix scanning
+- allow to stay in factory FW by holding a key combo on powerup
+  - choose combo
+  - document
 
-- only enable USB in stock FW upon request over I2C (idling USB stack takes
-  about 0.6mA on top of 1.8mA baseline)
+- test I2C interface using FX2
 
-- first I2C TX after switch to USER firmware after flasging over I2C fails,
+- first I2C TX after switch to USER firmware after flashing over I2C fails,
   subsequent ones work
   - also power consumption indicates power consumption of the sotck firmware
     so maybe we just sleep in stock instead of switching after flashing?
 
-- power measurement / optimization
-  - currently with no USB stack and in constant PD mode: 1.8mA
-  - theoretical lower limit 0.5mA (no idea how they achieve it)
+------------
 
+- implement I2C configuration options
+  - disable keyboard matrix scanning
+- only enable USB in stock FW upon request over I2C (idling USB stack takes
+  about 0.6mA on top of 1.8mA baseline)
 
 Charger behavior
 ----------------
