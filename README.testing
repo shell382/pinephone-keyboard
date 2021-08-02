@@ -1,0 +1,43 @@
+Firmware testing
+----------------
+
+Situations/features to test:
+
+- factory firmware
+  - USB debugging
+    - is disabled by default after start
+    - can be enabled/disabled at runtime
+      - via I2C
+      - if Pine + F + U is pressed  (status is reflected over I2C
+        in a control register)
+  - scanning block works
+    - switching it on/off works at runtime
+    - no interrupts are fired when blocked
+    - no keys appear pressed during a block
+  - USB bootloader jump works
+    - if Pine + F + B is pressed
+    - via USB debugger mode
+    - via I2C command
+  - reset over I2C works
+  - I2C debug log readout works
+  - selftest works
+    - shows result via I2C debug log
+  - exposed GPIOs are accessible over I2C
+    - direction configuration works
+    - readout/setting works
+
+- interrupt
+  - 10us pulse visible on logical probe capture
+  - POGO interrupt is received on the SoC
+
+- charger
+  - I2C A communication works
+  - I2C A timeout mechanism works when the bus is blocked
+
+- user firmware
+  - flashing works
+  - reading works
+  - deletion works
+  - is not jumped to unless it's commited after flashing
+  - can be executed
+    - starts automatically unless Pine+F+H is held on powerup

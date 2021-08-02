@@ -35,6 +35,7 @@ General ranges:
    bit 1: Flashing mode
    bit 2: Self-test features
    bit 3: Stock firmware flag (only stock firmware should have this set)
+   bit 4: Charger register read/writes are supported
    
 0x06: bits 3-0: number of rows, bits 7-4 number of cols
 0x07: CRC8 of keyboard data from 0x08-0x13
@@ -44,29 +45,28 @@ General ranges:
 
 0x20: System configuration
    bit 0: disable KB scanning (1: scanning disabled, 0: scanning enabled)
-   bit 1: poll mode
-          1: don't rely on row change detection, poll the matrix periodically
-             (prevents MCU power down)
-          0: power down the MCU when no key is pressed, and rely on change
-             detection on row inupts to wake the MCU up
-   bit 2: enable USB debug interface
+   bit 1: enable USB debug interface
           1: enabled
           0: disabled
 
-0x21: System command
+0x21: Charger register address
+0x22: Charger register value
+
+0x23: System command
       Writing values into this register causes the firmware to perform
       certain one-shot actions:
 
-      0x52 ('R') - reset the MCU
-      0x63 ('c') - run a column self-test
-      0x72 ('r') - run a row self-test
-                   (results for both tests will be stored in test-result
-                    registers)
+      0x72 ('r') - reset the MCU
+      0x69 ('i') - jump to USB bootloader
+      0x74 ('t') - run a self-test
+                   (results are as a text in debug log)
+      0x91       - read charger register
+      0xA1       - write charger register
 
       The register is set to 0x00 or 0xff after the operation completes.
       0xff means error.
 
-0x22: Writing value 0x53 ('S') to this register stops the main app from
+0x24: Writing value 0x53 ('S') to this register stops the main app from
       jumping to the user app.
 
 
@@ -147,7 +147,7 @@ is flashed.
 
 After MCU powerup or reset, stock firmware will listen for 1s on I2C interface,
 before passing control to the user firmware. If 0x53 is not written to register
-0x22 during that time, this will prevent execution of the user's firmware.
+0x24 during that time, this will prevent execution of the user's firmware.
 
 If the user firmware execution is not prevented in this way, stock firmware
 will redirect interrupt vectors from 0x0000+offset to 0x4000+offset and jump
@@ -172,12 +172,12 @@ Flashing steps:
    ... repeat 1-5 for all memory locations to be flashed
 6) Write command 0x43 to reg 0xf4
 7) Poll 0xf4 for result (either 0x00 or 0xff)
-8) Reset the MCU by writing command 0x52 to reg 0x21
+8) Reset the MCU by writing command 0x72 to reg 0x23
 
 
 Self-tests
 ----------
 
-1) Write command 'r' or 'c' to reg 0x21
+1) Write command 't' to reg 0x23
 2) Read repeatedly from register 0xff to get the self-test results
    in human readable text form

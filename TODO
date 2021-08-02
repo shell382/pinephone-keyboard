@@ -1,36 +1,21 @@
 Firmware
 --------
 
-- allow to stay in factory FW by holding a key combo on powerup
-  - choose combo
-  - document
+- check that the charger's INT pin is high prior to I2C A communication
+  and return error if it is not (P87 must have pull-up enabled, and
+  it is low if charger is free to communicate)
 
-- test I2C interface using FX2
+- trigger POGO interrupt on P84 (open drain mode)
+
+- implement special key combos:
+  - Pine + F + H  (stay in main FW if pressed during powerup)
+  - Pine + F + U  (enable USB debugger)
+  - Pine + F + B  (jump to USB bootloader)
 
 - first I2C TX after switch to USER firmware after flashing over I2C fails,
   subsequent ones work
   - also power consumption indicates power consumption of the sotck firmware
     so maybe we just sleep in stock instead of switching after flashing?
-
-------------
-
-- implement I2C configuration options
-  - disable keyboard matrix scanning
-- only enable USB in stock FW upon request over I2C (idling USB stack takes
-  about 0.6mA on top of 1.8mA baseline)
-
-Charger behavior
-----------------
-
-- does the charger turn off VOUT after some period of low load?
-- does it enable it again to see if there's a need for it?
-- this auto-off behavior will kill the power to the keyboard
-  controller, so we need a way to detect it and power the controller
-  from the pinephone side by enabling VBUS.
-  - tricky!
-  - or make the user keep pressing the kb power button to use the
-    keyboard for a while, like in a train conductor has to in a train :)
-    - not good!
 
 
 Userspace input device daemon
