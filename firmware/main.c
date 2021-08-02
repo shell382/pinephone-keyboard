@@ -1886,8 +1886,8 @@ void main(void)
 		run_timed_tasks = 0;
 
 #if CONFIG_STOCK_FW
-		// after 1s check if we should jump to user firmware
-		if (!user_app_checked && ticks > 1000 / 20) {
+		// after 300ms check if we should jump to user firmware
+		if (!user_app_checked && ticks > 300 / 20) {
 			if (app_flag == 1 && ctl_regs[REG_SYS_USER_APP_BLOCK - REG_SYS_CONFIG] != REG_SYS_USER_APP_BLOCK_MAGIC)
 				jmp_to_user_fw();
 
