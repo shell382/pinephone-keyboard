@@ -204,6 +204,44 @@ static void jmp_to_user_fw(void) __naked
 #endif
 
 // }}}
+// {{{ Timers/delays
+
+// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
+#define T0_SET_TIMEOUT(n) { \
+	TL0 = 0x00; \
+	TH0 = (0x10000u - n) >> 8; \
+	TL0 = (0x10000u - n) & 0xff; \
+	}
+
+#define T1_SET_TIMEOUT(n) { \
+	TL1 = 0x00; \
+	TH1 = (0x10000u - n) >> 8; \
+	TL1 = (0x10000u - n) & 0xff; \
+	}
+
+#define delay_us(n) { \
+	TL0 = 0x00; \
+	TF0 = 0; \
+	TH0 = (0x10000u - 2 * n) >> 8; \
+	TL0 = (0x10000u - 2 * n) & 0xff; \
+	while (!TF0); \
+}
+
+static volatile __bit run_timed_tasks = 0;
+
+// we use this interrupt as a scheduling tick (wakeup from sleep)
+
+void timer1_interrupt(void) __interrupt(IRQ_TIMER1) __using(1)
+{
+	run_timed_tasks = 1;
+
+	// 20 ms
+	T1_SET_TIMEOUT(40000);
+
+	TF1 = 0;
+}
+
+// }}}
 // {{{ Original USB bootloader integration
 
 static void usb_bootloader_jump(void) __naked
@@ -278,44 +316,6 @@ static void usb_bootloader_jump(void) __naked
 	__asm__("mov r6,#0x5a");
 	__asm__("mov r7,#0xe7");
 	__asm__("ljmp 0x0118");
-}
-
-// }}}
-// {{{ Timers/delays
-
-// timers clock is 2 MHz so we need to wait for 2000 ticks to get delay of 1ms
-#define T0_SET_TIMEOUT(n) { \
-	TL0 = 0x00; \
-	TH0 = (0x10000u - n) >> 8; \
-	TL0 = (0x10000u - n) & 0xff; \
-	}
-
-#define T1_SET_TIMEOUT(n) { \
-	TL1 = 0x00; \
-	TH1 = (0x10000u - n) >> 8; \
-	TL1 = (0x10000u - n) & 0xff; \
-	}
-
-#define delay_us(n) { \
-	TL0 = 0x00; \
-	TF0 = 0; \
-	TH0 = (0x10000u - 2 * n) >> 8; \
-	TL0 = (0x10000u - 2 * n) & 0xff; \
-	while (!TF0); \
-}
-
-static volatile __bit run_timed_tasks = 0;
-
-// we use this interrupt as a scheduling tick (wakeup from sleep)
-
-void timer1_interrupt(void) __interrupt(IRQ_TIMER1) __using(1)
-{
-	run_timed_tasks = 1;
-
-	// 20 ms
-	T1_SET_TIMEOUT(40000);
-
-	TF1 = 0;
 }
 
 // }}}
