@@ -1932,7 +1932,7 @@ void main(void)
 
 				// signal interrupt
 				ext_int_assert();
-				delay_us(100);
+				delay_us(10);
 				ext_int_deassert();
 
 #if CONFIG_USB_STACK
