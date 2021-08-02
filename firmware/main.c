@@ -1903,6 +1903,13 @@ void main(void)
 		}
 #endif
 
+		// do nothing if scanning is blocked
+		if (cfg & REG_SYS_CONFIG_SCAN_BLOCK) {
+			if (scan_active)
+				keyscan_idle();
+			continue;
+		}
+
 		// if active scanning is not active and port 6 change was
 		// detected, and some key is still pressed, enter active
 		// scanning mode
