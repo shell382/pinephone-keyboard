@@ -1932,6 +1932,9 @@ void main(void)
 		if (jump_to_usb_bootloader)
 			__asm__ ("ljmp _usb_bootloader_jump");
 
+		// get current system config
+		uint8_t cfg = REG_SYS(CONFIG);
+
 		// if the 20ms timer did not expire yet, check if we can
 		// powerdown, otherwise busyloop
 		if (!run_timed_tasks) {

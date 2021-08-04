@@ -45,9 +45,6 @@ General ranges:
 
 0x20: System configuration
    bit 0: disable KB scanning (1: scanning disabled, 0: scanning enabled)
-   bit 1: enable USB debug interface
-          1: enabled
-          0: disabled
 
 0x21: Charger register address
 0x22: Charger register value
