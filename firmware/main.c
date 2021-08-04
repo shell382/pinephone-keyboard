@@ -1065,7 +1065,7 @@ static uint8_t i2c_a_read(void)
 	// read received data
 	REG_SYS(I2CA_DATA) = P0_I2CBDB;
 
-	status = 0;
+	return 0;;
 err:
 	i2c_a_stop();
 	return status;
