@@ -1953,18 +1953,9 @@ void main(void)
 #endif
 		}
 
-		// get current system config
-		uint8_t cfg = REG_SYS(CONFIG);
-		__bit usb_enabled = !!(cfg & REG_SYS_CONFIG_USB_DEBUG_EN);
 		// if we were asked to jump to USB IAP, do it
 		if (jump_to_usb_bootloader)
 			__asm__ ("ljmp _usb_bootloader_jump");
-
-		if (usb_initialized && !usb_enabled) {
-			usb_initialized = 0;
-			ticks = 0;
-			usb_disable();
-		}
 
 		// if the 20ms timer did not expire yet, check if we can
 		// powerdown, otherwise busyloop
@@ -1981,7 +1972,7 @@ void main(void)
 			if (i2c_idle && !scan_active
 			    && !p6_changed
 #if CONFIG_USB_STACK
-			    && (usb_initialized || !usb_enabled) && usb_suspended
+			    && usb_initialized  && usb_suspended
 #endif
 #if CONFIG_STOCK_FW
 			    && user_app_checked
@@ -2039,7 +2030,7 @@ void main(void)
 
 #if CONFIG_USB_STACK
 		// after 500ms, init usb
-		if (!usb_initialized && usb_enabled && ticks > 500 / 20) {
+		if (!usb_initialized && ticks > 500 / 20) {
 			usb_init();
 			usb_initialized = 1;
 		}
@@ -2076,17 +2067,14 @@ void main(void)
 				ext_int_assert();
 				delay_us(10);
 				ext_int_deassert();
-
 #if CONFIG_USB_STACK
-				if (usb_enabled) {
-					usb_key_change = 1;
+				usb_key_change = 1;
 
-					// USB wakeup
-					PAGESW = 1;
-					if (P1_UDCCTRL & BIT(2)) {
-						P1_UDCCTRL |= BIT(5);
-						P1_UDCCTRL &= ~BIT(5);
-					}
+				// USB wakeup
+				PAGESW = 1;
+				if (P1_UDCCTRL & BIT(2)) {
+					P1_UDCCTRL |= BIT(5);
+					P1_UDCCTRL &= ~BIT(5);
 				}
 #endif
 
