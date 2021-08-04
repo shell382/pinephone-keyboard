@@ -153,7 +153,7 @@ static __bit jump_to_usb_bootloader = 0;
 
 uint8_t __idata __at(0xff) stock_flag = 1;
 
-static void usb_disable(void);
+//XXX: check if we want to jump to user FW
 
 // cleanup after stock firmware and jump to user firmware
 static void jmp_to_user_fw(void) __naked
@@ -187,10 +187,17 @@ static void jmp_to_user_fw(void) __naked
 	P0_PRST = 0;
 
 	// disable USB and clear irq flags
-	usb_disable();
+	PAGESW = 1;
+	P1_PHYTEST0 &= ~BIT(6); // phy disable
+	P1_UDCCTRL &= ~BIT(6); // udc disable
+	P1_UDCINT0STA = 0;
+	P1_UDCINT1STA = 0;
+	P1_UDCINT2STA = 0;
+	P1_UDCINT0EN = 0;
+	P1_UDCINT1EN = 0;
+	P1_UDCINT2EN = 0;
 
 	// disable pullups, set all pins to input
-	PAGESW = 1;
 	P1_PHCON2 = 0;
 	P1_P9M0 = 0xffu;
 	PAGESW = 0;
@@ -287,24 +294,6 @@ static void usb_bootloader_jump(void) __naked
 	P1_UDCINT0EN = 0;
 	P1_UDCINT1EN = 0;
 	P1_UDCINT2EN = 0;
-
-	// Bootloader would not enable these resources, so we need to make
-	// sure we enable them before jumping to it:
-
-	// USB on USB pins
-	P1_USBCTRL |= BIT(7);
-
-	// turn on PLL48
-	P1_UDCCTRL &= ~BIT(0);
-
-	// turn on USB resources (phy power up, PLL48 powerup)
-	P1_USBCTRL &= ~(BIT(0) | BIT(1));
-
-	// enable auto-tuning internal RC oscillator based on USB SOF packets
-	P1_IRCCTRL &= ~BIT(1); // disable manual trim
-
-	// wait for pll to stabilize
-	delay_us(5000);
 
 	// disable pullups, set all pins to input
 	P1_PHCON2 = 0;
@@ -1761,21 +1750,6 @@ static void usb_init(void)
 {
 	PAGESW = 1;
 
-	// USB on USB pins
-	P1_USBCTRL |= BIT(7);
-
-	// turn on PLL48
-	P1_UDCCTRL &= ~BIT(0);
-
-	// turn on USB resources (phy power up, PLL48 powerup)
-	P1_USBCTRL &= ~(BIT(0) | BIT(1));
-
-	// enable auto-tuning internal RC oscillator based on USB SOF packets
-	P1_IRCCTRL &= ~BIT(1); // disable manual trim
-
-	// wait for pll to stabilize
-	delay_us(5000);
-
 	P1_UDCCTRL |= BIT(6); // udc enable
 	// wait for UDC to complete initialization
 	while (!(P1_UDCCTRL & BIT(1)));
@@ -1811,6 +1785,9 @@ static void usb_init(void)
 	P1_UDCINT0EN = BIT(5) | BIT(1) | BIT(6) | BIT(3);
 	P1_UDCINT1EN = BIT(0) | BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(6);
 	P1_UDCINT2EN = BIT(2);
+	//P1_UDCINT0EN = 0;
+	//P1_UDCINT1EN = 0;
+	//P1_UDCINT2EN = 0;
 
 	// enable phy, wakeup enable
 	P1_PHYTEST0 |= BIT(5) | BIT(6);
@@ -1827,32 +1804,11 @@ static void usb_init(void)
 
 static void usb_disable(void)
 {
-	// disable USB interrupts
-	PAGESW = 0;
-	P0_EIE2 &= ~BIT(2);
-
+	// reset phy/usb
 	PAGESW = 1;
 
-	// disable interrupts
-	P1_UDCINT0EN = 0;
-	P1_UDCINT1EN = 0;
-	P1_UDCINT2EN = 0;
-
-	// reset phy/usb
 	P1_PHYTEST0 &= ~(BIT(6) | BIT(5)); // phy disable
 	P1_UDCCTRL &= ~BIT(6); // udc disable
-
-	// turn off PLL48
-	P1_UDCCTRL |= BIT(0);
-
-	// turn off unused USB resources (phy power down, PLL48 powerdown
-	P1_USBCTRL |= BIT(0) | BIT(1);
-
-	// disable auto-tuning internal RC oscillator based on USB SOF packets
-	P1_IRCCTRL |= BIT(1); // enable manual trim
-
-	// GPIO on USB pins
-	P1_USBCTRL &= ~BIT(7);
 }
 
 // }}}
@@ -1912,6 +1868,9 @@ void main(void)
 	PAGESW = 1;
 	P1_PHCON2 = 0x00;
 
+	// enable auto-tuning internal RC oscillator based on USB SOF packets
+	P1_IRCCTRL &= ~BIT(1); // disable manual trim
+
 #if CONFIG_STOCK_FW
 	puts("ppkb firmware " FW_REVISION_STR " (stock)\n");
 #else
@@ -1926,6 +1885,22 @@ void main(void)
 	T1_SET_TIMEOUT(40000);
 
 	usb_disable();
+
+#if !CONFIG_USB_STACK
+	PAGESW = 1;
+
+	// GPIO on USB pins
+	P1_USBCTRL &= ~BIT(7);
+
+	// turn off PLL48
+	P1_UDCCTRL |= BIT(0);
+
+	// turn off unused USB resources (phy power down, PLL48 powerdown
+	P1_USBCTRL |= BIT(0) | BIT(1);
+
+	// enable auto-tuning internal RC oscillator based on USB SOF packets
+	P1_IRCCTRL |= BIT(1); // enable manual trim
+#endif
 
 #if CONFIG_FLASH_ENABLE
 	for (uint8_t i = 0; i < 128; i++)
