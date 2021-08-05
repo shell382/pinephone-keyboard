@@ -1,12 +1,6 @@
 Firmware
 --------
 
-- check that the charger's INT pin is high prior to I2C A communication
-  and return error if it is not (P87 must have pull-up enabled, and
-  it is low if charger is free to communicate)
-
-- trigger POGO interrupt on P84 (open drain mode)
-
 - implement special key combos:
   - Pine + F + H  (stay in main FW if pressed during powerup)
   - Pine + F + U  (enable USB debugger)
