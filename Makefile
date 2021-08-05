@@ -42,4 +42,5 @@ $(OUT)fw-stock.bin $(OUT)fw-user.bin: $(wildcard firmware/*.*)
 	@mkdir -p $(OUT)
 	cd firmware && ./build.sh
 	cp -f firmware/build/fw-stock.bin $(OUT)fw-stock.bin
+	cp -f firmware/build/fw-stock-proto-v3.bin $(OUT)fw-stock-proto-v3.bin
 	cp -f firmware/build/fw-user.bin $(OUT)fw-user.bin
