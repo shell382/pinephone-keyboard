@@ -1984,7 +1984,7 @@ void main(void)
 			if (i2c_idle && !scan_active
 			    && !p6_changed
 #if CONFIG_USB_STACK
-			    && usb_initialized  && usb_suspended
+			    && usb_initialized && usb_suspended
 #endif
 #if CONFIG_STOCK_FW
 			    && user_app_checked
