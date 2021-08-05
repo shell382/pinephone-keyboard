@@ -496,16 +496,32 @@ static uint8_t keyscan_scan(uint8_t* res)
 
 static void ext_int_assert(void)
 {
+#if CONFIG_I2C_A
+	// modded prototype 3 POGO INT pin
+	P84 = 0;
+	PAGESW = 0;
+	P0_P8M0 &= ~BIT(4); // output
+#else
+	// original prototype POGO INT pin
 	P90 = 0;
 	PAGESW = 1;
 	P1_P9M0 &= ~BIT(0);
+#endif
 }
 
 static void ext_int_deassert(void)
 {
+#if CONFIG_I2C_A
+	// modded prototype 3 POGO INT pin
+	P84 = 0;
+	PAGESW = 0;
+	P0_P8M0 |= BIT(4); // input
+#else
+	// original prototype POGO INT pin
 	P90 = 0;
 	PAGESW = 1;
 	P1_P9M0 |= BIT(0);
+#endif
 }
 
 // }}}
@@ -587,7 +603,7 @@ static volatile uint8_t __idata ro_regs[REG_KEYMATRIX_STATE_END + 1] = {
 #if CONFIG_STOCK_FW
 		REG_FW_FEATURES_STOCK_FW |
 #endif
-#if CONFIG_I2CA
+#if CONFIG_I2C_A
 		REG_FW_FEATURES_I2CA |
 #endif
 		0,
@@ -990,6 +1006,16 @@ static __bit poll_flag(uint8_t flag)
 	return 0;
 }
 
+static __bit charger_is_woke(void)
+{
+	PAGESW = 1;
+	P1_PHCON2 |= BIT(3); // pull-up on P87-P84
+	PAGESW = 0;
+	P0_P8M0 |= BIT(7); // input
+
+	return !P87;
+}
+
 static __bit i2c_a_send_addr(uint8_t addr)
 {
 	P0_I2CASA = addr;
@@ -1038,6 +1064,9 @@ static uint8_t i2c_a_read(void)
 	P0_I2CACR2 &= ~BIT(5);
 	P0_I2CACR2 |= BIT(5);
 
+	if (!charger_is_woke())
+		return 0xff;
+
 	if (!i2c_a_send_addr(CHARGER_ADDR))
 		goto err;
 
@@ -1067,6 +1096,9 @@ static uint8_t i2c_a_write(void)
 	// reset FSM
 	P0_I2CACR2 &= ~BIT(5);
 	P0_I2CACR2 |= BIT(5);
+
+	if (!charger_is_woke())
+		return 0xff;
 
 	if (!i2c_a_send_addr(CHARGER_ADDR))
 		goto err;
@@ -1116,10 +1148,12 @@ static void exec_system_command(void)
 #endif
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_USB_IAP) {
 		jump_to_usb_bootloader = 1;
+#if CONFIG_I2C_A
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_READ) {
 		REG_SYS(COMMAND) = i2c_a_read();
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_WRITE) {
 		REG_SYS(COMMAND) = i2c_a_write();
+#endif
 	} else {
 		REG_SYS(COMMAND) = 0xff;
 		goto out_done;
