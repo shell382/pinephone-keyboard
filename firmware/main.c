@@ -1847,8 +1847,12 @@ static void usb_disable(void)
 
 // }}}
 
+extern uint8_t _start__stack[];
+
 void main(void)
 {
+	SP = (uint8_t)_start__stack;
+
 	PAGESW = 0;
 
 	// setup interrupts
