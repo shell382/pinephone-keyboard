@@ -1,17 +1,3 @@
-Firmware
---------
-
-- implement special key combos:
-  - Pine + F + H  (stay in main FW if pressed during powerup)
-  - Pine + F + U  (enable USB debugger)
-  - Pine + F + B  (jump to USB bootloader)
-
-- first I2C TX after switch to USER firmware after flashing over I2C fails,
-  subsequent ones work
-  - also power consumption indicates power consumption of the sotck firmware
-    so maybe we just sleep in stock instead of switching after flashing?
-
-
 Userspace input device daemon
 -----------------------------
 
