@@ -1851,6 +1851,8 @@ extern uint8_t _start__stack[];
 
 void main(void)
 {
+	uint8_t keys[12];
+
 	SP = (uint8_t)_start__stack;
 
 	PAGESW = 0;
@@ -2036,7 +2038,7 @@ void main(void)
 
 #if CONFIG_STOCK_FW
 		// after 300ms check if we should jump to user firmware
-		if (!user_app_checked && ticks > 300 / 20) {
+		if (!user_app_checked && ticks > 400 / 20) {
 			if (app_flag == 1 && REG_SYS(USER_APP_BLOCK) != REG_SYS_USER_APP_BLOCK_MAGIC)
 				jmp_to_user_fw();
 
@@ -2068,7 +2070,6 @@ void main(void)
 		// if we're in active scanning, scan the keys, and report
 		// new state
 		if (scan_active) {
-			uint8_t keys[12];
 			uint8_t active_rows = keyscan_scan(keys);
 
 			// check for changes
@@ -2094,9 +2095,18 @@ void main(void)
 				}
 #endif
 
-				// pressing FN+PINE+F switches to flashing mode (keys 1:2 3:5 5:2, electrically)
-				if (keys[0] & BIT(2) && keys[2] & BIT(5) && keys[4] & BIT(2))
-					jump_to_usb_bootloader = 1;
+				// Check for Pine + F + # being held during powerup
+				if ((keys[0] & BIT(2)) && (keys[4] & BIT(2))) {
+#if CONFIG_STOCK_FW
+					// H - stay in main firmware
+					if (keys[6] & BIT(2))
+						user_app_checked = 1;
+#endif
+
+					// B - jump to USB bootloader
+					if (keys[5] & BIT(3))
+						jump_to_usb_bootloader = 1;
+				}
 			}
 
 			if (!active_rows)
