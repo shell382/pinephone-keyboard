@@ -37,7 +37,7 @@
 #define CONFIG_STOCK_FW 1
 #endif
 #ifndef CONFIG_I2C_A
-#define CONFIG_I2C_A 1
+#define CONFIG_I2C_A 0
 #endif
 
 #define USB_DEBUG 0

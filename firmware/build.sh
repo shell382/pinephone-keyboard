@@ -45,7 +45,7 @@ sdcc \
 	-I. \
 	-DFW_REVISION_STR="\"$(git describe) $(git log -1 --format=%cd --date=iso)\"" \
 	-DCONFIG_STOCK_FW=1 \
-	-DCONFIG_I2C_A=1 \
+	-DCONFIG_I2C_A=0 \
 	build/stock-ivt.rel main.c \
 	-o build/fw-stock.ihx
 
