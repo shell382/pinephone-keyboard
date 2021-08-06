@@ -1851,7 +1851,7 @@ extern uint8_t _start__stack[];
 
 void main(void)
 {
-	uint8_t keys[12];
+	static uint8_t keys[12];
 
 	SP = (uint8_t)_start__stack;
 
