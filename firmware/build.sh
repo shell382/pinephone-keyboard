@@ -18,7 +18,7 @@ hex2bin()
 cpp -P -nostdinc -I. -D__ASM_ONLY__ stock-ivt.asm build/stock-ivt.asm
 sdas8051 -plosgff build/stock-ivt.rel build/stock-ivt.asm
 
-echo Stock FW
+echo "Stock FW"
 sdcc \
 	-mmcs51 --iram-size 256 --xram-size 2048 \
 	--code-size 0x2000 --code-loc 0x2130 \
@@ -26,26 +26,6 @@ sdcc \
 	-I. \
 	-DFW_REVISION_STR="\"$(git describe) $(git log -1 --format=%cd --date=iso)\"" \
 	-DCONFIG_STOCK_FW=1 \
-	-DCONFIG_I2C_A=0 \
-	build/stock-ivt.rel main.c \
-	-o build/fw-stock-proto-v3.ihx
-
-hex2bin fw-stock-proto-v3
-
-# build stock FW (hw mod)
-
-cpp -P -nostdinc -I. -D__ASM_ONLY__ stock-ivt.asm build/stock-ivt.asm
-sdas8051 -plosgff build/stock-ivt.rel build/stock-ivt.asm
-
-echo "Stock FW Final"
-sdcc \
-	-mmcs51 --iram-size 256 --xram-size 2048 \
-	--code-size 0x2000 --code-loc 0x2130 \
-	-Wl-bIVECT=0x2000 \
-	-I. \
-	-DFW_REVISION_STR="\"$(git describe) $(git log -1 --format=%cd --date=iso)\"" \
-	-DCONFIG_STOCK_FW=1 \
-	-DCONFIG_I2C_A=0 \
 	build/stock-ivt.rel main.c \
 	-o build/fw-stock.ihx
 
