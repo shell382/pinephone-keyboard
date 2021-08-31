@@ -36,9 +36,6 @@
 #ifndef CONFIG_STOCK_FW
 #define CONFIG_STOCK_FW 1
 #endif
-#ifndef CONFIG_I2C_A
-#define CONFIG_I2C_A 0
-#endif
 
 #define USB_DEBUG 0
 
@@ -496,32 +493,18 @@ static uint8_t keyscan_scan(uint8_t* res)
 
 static void ext_int_assert(void)
 {
-#if CONFIG_I2C_A
-	// modded prototype 3 POGO INT pin
-	P84 = 0;
-	PAGESW = 0;
-	P0_P8M0 &= ~BIT(4); // output
-#else
-	// original prototype POGO INT pin
+	// POGO INT pin
 	P90 = 0;
 	PAGESW = 1;
 	P1_P9M0 &= ~BIT(0);
-#endif
 }
 
 static void ext_int_deassert(void)
 {
-#if CONFIG_I2C_A
-	// modded prototype 3 POGO INT pin
-	P84 = 0;
-	PAGESW = 0;
-	P0_P8M0 |= BIT(4); // input
-#else
-	// original prototype POGO INT pin
+	// POGO INT pin
 	P90 = 0;
 	PAGESW = 1;
 	P1_P9M0 |= BIT(0);
-#endif
 }
 
 // }}}
@@ -602,9 +585,6 @@ static volatile uint8_t __idata ro_regs[REG_KEYMATRIX_STATE_END + 1] = {
 #endif
 #if CONFIG_STOCK_FW
 		REG_FW_FEATURES_STOCK_FW |
-#endif
-#if CONFIG_I2C_A
-		REG_FW_FEATURES_I2CA |
 #endif
 		0,
 	[REG_KEYMATRIX_SIZE] = 0xc6, // 12 x 6
@@ -983,150 +963,214 @@ static void self_test_run(void)
 #endif
 
 // }}}
-// {{{ I2C A forwarding
-
-#if CONFIG_I2C_A
+// {{{ Charger I2C bitbanging
 
 #define CHARGER_ADDR 0x75u
 
-// returns 1 on success
-static __bit poll_flag(uint8_t flag)
+// Inspired by: https://calcium3000.wordpress.com/2016/08/19/i2c-bit-banging-tutorial-part-i/
+// TODO: recognize clock-stretching
+
+#define CHG_SCL		BIT(5)
+#define CHG_SDA		BIT(6)
+#define CHG_INT		BIT(7)
+#define CHG_PORT	P8
+#define CHG_RELEASE_SCL P0_P8M0 &= ~CHG_SCL
+#define CHG_PULL_SCL	P0_P8M0 |= CHG_SCL
+#define CHG_RELEASE_SDA P0_P8M0 &= ~CHG_SDA
+#define CHG_PULL_SDA	P0_P8M0 |= CHG_SDA
+
+void i2c_init(void)
 {
-	// set timeout for the duration of single transfer at 100kHz + some
-	// slack for slave clock stretching
+	PAGESW = 0;
+
+	P0_P8M0 |= CHG_SCL | CHG_SDA | CHG_INT; // set SCL/SDA to input (release I2C bus)
+	P8 &= ~(CHG_SCL | CHG_SDA); // set SCL/SDA to output low when changed to output mode
+}
+
+// returns 1 on busy/timeout, abort needed because the bus is locked
+static __bit poll_scl_busy(void)
+{
+	// timeout for clock stretching by the slave
 	T0_SET_TIMEOUT(2 * 250); // 250us
 
-	while (!TF0) {
-		if (P0_I2CASF & flag) {
-			P0_I2CASF &= ~flag;
-			return 1;
-		}
+	while (!TF0)
+		if (CHG_PORT & CHG_SCL)
+			return 0;
+
+	return 1;
+}
+
+void i2c_start_condition(void)
+{
+	CHG_RELEASE_SCL;
+	CHG_RELEASE_SDA;
+	delay_us(5);
+
+	CHG_PULL_SDA;
+	delay_us(5);
+
+	CHG_PULL_SCL;
+	delay_us(5);
+}
+
+void i2c_stop_condition(void)
+{
+	CHG_PULL_SDA;
+	delay_us(5);
+
+	CHG_RELEASE_SCL;
+	delay_us(5);
+
+	CHG_RELEASE_SDA;
+	delay_us(5);
+}
+
+void i2c_write_bit(__bit b)
+{
+	if (b)
+		CHG_RELEASE_SDA;
+	else
+		CHG_PULL_SDA;
+
+	delay_us(5);
+	CHG_RELEASE_SCL;
+
+	delay_us(5);
+	CHG_PULL_SCL;
+}
+
+__bit i2c_read_bit(void)
+{
+	__bit b;
+
+	CHG_RELEASE_SDA;
+	delay_us(5);
+
+	CHG_RELEASE_SCL;
+	delay_us(5);
+
+	if (CHG_PORT & CHG_SDA)
+		b = 1;
+	else
+		b = 0;
+
+	CHG_PULL_SCL;
+
+	return b;
+}
+
+__bit i2c_write_byte(uint8_t data)
+{
+	uint8_t i;
+
+	// write data
+	for (i = 0; i < 8; i++) {
+		i2c_write_bit(data & 0x80);   // write the most-significant bit
+		data <<= 1;
 	}
 
-	return 0;
+	// read ack bit
+	return i2c_read_bit();
+}
+
+uint8_t i2c_read_byte(__bit ack)
+{
+	uint8_t data = 0;
+	uint8_t i;
+
+	// read data
+	for (i = 0; i < 8; i++) {
+		data <<= 1;
+		data |= i2c_read_bit();
+	}
+
+	// send ack
+	i2c_write_bit(!ack);
+	return data;
+}
+
+__bit i2c_write_reg(uint8_t reg, uint8_t data)
+{
+	__bit ok = 0;
+
+	PAGESW = 0;
+
+	i2c_start_condition();
+
+	if (!i2c_write_byte(CHARGER_ADDR << 1))
+		goto stop;
+
+	if (!i2c_write_byte(reg))
+		goto stop;
+
+	if (!i2c_write_byte(data))
+		goto stop;
+
+	ok = 1;
+stop:
+	i2c_stop_condition();
+	return ok;
+}
+
+__bit i2c_read_reg(uint8_t reg, uint8_t* data)
+{
+	__bit ok = 0;
+
+	PAGESW = 0;
+
+	i2c_start_condition();
+
+	if (!i2c_write_byte(CHARGER_ADDR << 1))
+		goto stop;
+
+	if (!i2c_write_byte(reg))
+		goto stop;
+
+	// repeated start
+	i2c_start_condition();
+
+	if (!i2c_write_byte((CHARGER_ADDR << 1) | 0x01))
+		goto stop;
+
+	*data = i2c_read_byte(0);
+
+	ok = 1;
+stop:
+	i2c_stop_condition();
+	return ok;
 }
 
 static __bit charger_is_woke(void)
 {
-	PAGESW = 1;
-	P1_PHCON2 |= BIT(3); // pull-up on P87-P84
-	PAGESW = 0;
-	P0_P8M0 |= BIT(7); // input
-
 	return !P87;
 }
 
-static __bit i2c_a_send_addr(uint8_t addr)
+static uint8_t charger_read(void)
 {
-	P0_I2CASA = addr;
-
-        P0_I2CACR1 |= BIT(7); // strobe
-
-	if (!poll_flag(BIT(0)))
-		return 0;
-
-	if (!(P0_I2CACR1 & BIT(2))) // ACK
-		return 0;
-
-	return 1;
-}
-
-static __bit i2c_a_send_data(uint8_t data)
-{
-	P0_I2CADB = data;
-
-        P0_I2CACR1 |= BIT(7); // strobe
-
-	if (!poll_flag(BIT(0)))
-		return 0;
-
-	if (!(P0_I2CACR1 & BIT(2))) // ACK
-		return 0;
-
-	return 1;
-}
-
-static void i2c_a_stop(void)
-{
-        P0_I2CACR1 |= BIT(4); // stop
-	poll_flag(BIT(2));
-
-	// and finaly do a reset just in case
-	P0_I2CACR2 &= ~BIT(5);
-	P0_I2CACR2 |= BIT(5);
-}
-
-static uint8_t i2c_a_read(void)
-{
-	uint8_t status = 0xff;
-
-	// reset FSM
-	P0_I2CACR2 &= ~BIT(5);
-	P0_I2CACR2 |= BIT(5);
-
 	if (!charger_is_woke())
 		return 0xff;
 
-	if (!i2c_a_send_addr(CHARGER_ADDR))
-		goto err;
+	if (!i2c_read_reg(REG_SYS(CHG_ADDR), &REG_SYS(CHG_DATA)))
+		return 0xff;
 
-	if (!i2c_a_send_data(REG_SYS(I2CA_ADDR)))
-		goto err;
-
-	if (!i2c_a_send_addr(CHARGER_ADDR | BIT(0)))
-		goto err;
-
-        P0_I2CACR1 |= BIT(7) | BIT(4); // strobe + stop
-	if (!poll_flag(BIT(2))) // poll for stop bit
-		goto err;
-
-	// read received data
-	REG_SYS(I2CA_DATA) = P0_I2CBDB;
-
-	return 0;;
-err:
-	i2c_a_stop();
-	return status;
+	return 0;
 }
 
-static uint8_t i2c_a_write(void)
+static uint8_t charger_write(void)
 {
-	uint8_t status = 0xff;
-
-	// reset FSM
-	P0_I2CACR2 &= ~BIT(5);
-	P0_I2CACR2 |= BIT(5);
-
 	if (!charger_is_woke())
 		return 0xff;
 
-	if (!i2c_a_send_addr(CHARGER_ADDR))
-		goto err;
+	if (!i2c_write_reg(REG_SYS(CHG_ADDR), REG_SYS(CHG_DATA)))
+		return 0xff;
 
-	if (!i2c_a_send_data(REG_SYS(I2CA_ADDR)))
-		goto err;
-
-	if (!i2c_a_send_data(REG_SYS(I2CA_DATA)))
-		goto err;
-
-	status = 0;
-err:
-	i2c_a_stop();
-	return status;
+	return 0;
 }
 
-static void i2c_a_init(void)
+static void charger_init(void)
 {
-	PAGESW = 0;
-
-	// un-powerdown I2CA
-	P0_DEVPD2 &= ~BIT(0);
-
-	P0_I2CACR1 = BIT(6); // master mode
-	P0_I2CACR2 = BIT(5) | 0x07 << 1 | BIT(0);  // 100kHz mode, enable
+	i2c_init();
 }
-
-#endif
 
 // }}}
 // {{{ System commands
@@ -1148,12 +1192,10 @@ static void exec_system_command(void)
 #endif
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_USB_IAP) {
 		jump_to_usb_bootloader = 1;
-#if CONFIG_I2C_A
-	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_READ) {
-		REG_SYS(COMMAND) = i2c_a_read();
-	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_I2CA_WRITE) {
-		REG_SYS(COMMAND) = i2c_a_write();
-#endif
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_CHG_READ) {
+		REG_SYS(COMMAND) = charger_read();
+	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_CHG_WRITE) {
+		REG_SYS(COMMAND) = charger_write();
 	} else {
 		REG_SYS(COMMAND) = 0xff;
 		goto out_done;
@@ -1917,9 +1959,8 @@ void main(void)
 	puts("ppkb firmware " FW_REVISION_STR " (user)\n");
 #endif
 
-#if CONFIG_I2C_A
-	i2c_a_init();
-#endif
+	charger_init();
+
 	i2c_slave_init();
 
 	T1_SET_TIMEOUT(40000);
