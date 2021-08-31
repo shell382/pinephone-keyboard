@@ -57,7 +57,7 @@ foreach (explode("\n", $kmap) as $ln) {
 		
 		for ($i = 0; $i < 3; $i++) {
 			$alt = $alts[$i] ?? null;
-			if (!$alt)
+			if ($alt === null)
 				break;
 
 			$keys = preg_split('#\+#', $alt, -1, PREG_SPLIT_NO_EMPTY);
