@@ -693,15 +693,16 @@ int main(int ac, char* av[])
 
 	for (int i = optind; i < ac; i++) {
 		if (!strcmp(av[i], "read")) {
-			uint8_t rom[0x8000];
+			uint8_t rom[0x8100];
 			memset(rom, 0xff, sizeof rom);
 
 			printf("Reading code ROM\n");
 			cmd_read_rom(rom, 0, 0x8000);
+			cmd_read_option(rom + 0x8000);
 
 			int fd = open(rom_out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 			if (fd >= 0) {
-				ssize_t wr = write(fd, rom, 0x8000);
+				ssize_t wr = write(fd, rom, 0x8100);
 				syscall_error(wr < 0, "write failed");
 				close(fd);
 			}
