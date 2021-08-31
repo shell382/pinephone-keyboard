@@ -25,15 +25,15 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-#define MEGI_PROTO_BUG 1
-
 int read_kb(int fd, uint8_t data[16])
 {
 	int ret;
-	uint8_t b = 5;
+
+	uint8_t b = REG_KEYMATRIX_STATE_CRC8;
+
 	struct i2c_msg msgs[] = {
 		{ KB_ADDR, 0, 1, &b },
-		{ KB_ADDR, I2C_M_RD, 16, data },
+		{ KB_ADDR, I2C_M_RD, REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8 + 1, data },
 	};
 
 	struct i2c_rdwr_ioctl_data msg = {
@@ -43,8 +43,16 @@ int read_kb(int fd, uint8_t data[16])
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
 	syscall_error(ret < 0, "I2C_RDWR failed");
+	
+//	for (int i = 0; i < REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8 + 1; i++)
+//		printf("%02hhx", data[i]);
+//	printf("\n");
 
-	return ret == 1 ? 0 : -1;
+	uint8_t crc = crc8(data + 1, REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8);
+	if (crc != data[0])
+		return -1;
+
+	return ret == 2 ? 0 : -1;
 }
 
 int write_kb(int fd, uint8_t* data)
@@ -256,15 +264,8 @@ void update_keys(uint8_t* map)
 			if (map[c] != 0xff && map[c] & (1u << r)) {
 				uint8_t el_idx = (r << 4) | c;
 				uint8_t phys_idx = el_phys_map[el_idx];
-				if (phys_idx != 0xff && n_keys < 128) {
-#if MEGI_PROTO_BUG
-					int key = keymap_base[phys_idx][0];
-					if (key == KEY_LEFTCTRL || key == KEY_Z) // ignore these keys on my keyboard
-						continue;
-#endif
-
+				if (phys_idx != 0xff && n_keys < 128)
 					keys[n_keys++] = phys_idx;
-				}
 			}
 		}
 	}
@@ -327,8 +328,8 @@ int main(int ac, char* av[])
 			if (ret)
 				continue;
 
-//			print_bitmap(buf + 4);
-			update_keys(buf + 4);
+			//print_bitmap(buf + 1);
+			update_keys(buf + 1);
 		}
 	}
 
