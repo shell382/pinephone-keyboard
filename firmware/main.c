@@ -968,25 +968,30 @@ static void self_test_run(void)
 #define CHARGER_ADDR 0x75u
 
 // Inspired by: https://calcium3000.wordpress.com/2016/08/19/i2c-bit-banging-tutorial-part-i/
-// TODO: recognize clock-stretching
+// TODO: recognize clock-stretching (probably not necessary, charger doesn't use it)
 
 #define CHG_SCL		BIT(5)
 #define CHG_SDA		BIT(6)
 #define CHG_INT		BIT(7)
 #define CHG_PORT	P8
-#define CHG_RELEASE_SCL P0_P8M0 &= ~CHG_SCL
-#define CHG_PULL_SCL	P0_P8M0 |= CHG_SCL
-#define CHG_RELEASE_SDA P0_P8M0 &= ~CHG_SDA
-#define CHG_PULL_SDA	P0_P8M0 |= CHG_SDA
+#define CHG_RELEASE_SCL P0_P8M0 |= CHG_SCL
+#define CHG_PULL_SCL	P0_P8M0 &= ~CHG_SCL
+#define CHG_RELEASE_SDA P0_P8M0 |= CHG_SDA
+#define CHG_PULL_SDA	P0_P8M0 &= ~CHG_SDA
 
 void i2c_init(void)
 {
+	PAGESW = 1;
+
+	P1_PHCON2 |= BIT(3);
+
 	PAGESW = 0;
 
 	P0_P8M0 |= CHG_SCL | CHG_SDA | CHG_INT; // set SCL/SDA to input (release I2C bus)
 	P8 &= ~(CHG_SCL | CHG_SDA); // set SCL/SDA to output low when changed to output mode
 }
 
+/*
 // returns 1 on busy/timeout, abort needed because the bus is locked
 static __bit poll_scl_busy(void)
 {
@@ -999,11 +1004,14 @@ static __bit poll_scl_busy(void)
 
 	return 1;
 }
+*/
 
 void i2c_start_condition(void)
 {
-	CHG_RELEASE_SCL;
 	CHG_RELEASE_SDA;
+	delay_us(5);
+
+	CHG_RELEASE_SCL;
 	delay_us(5);
 
 	CHG_PULL_SDA;
@@ -1031,12 +1039,13 @@ void i2c_write_bit(__bit b)
 		CHG_RELEASE_SDA;
 	else
 		CHG_PULL_SDA;
+	delay_us(1);
 
-	delay_us(5);
 	CHG_RELEASE_SCL;
-
 	delay_us(5);
+
 	CHG_PULL_SCL;
+	delay_us(1);
 }
 
 __bit i2c_read_bit(void)
@@ -1044,10 +1053,9 @@ __bit i2c_read_bit(void)
 	__bit b;
 
 	CHG_RELEASE_SDA;
-	delay_us(5);
 
 	CHG_RELEASE_SCL;
-	delay_us(5);
+	delay_us(4);
 
 	if (CHG_PORT & CHG_SDA)
 		b = 1;
@@ -1055,6 +1063,7 @@ __bit i2c_read_bit(void)
 		b = 0;
 
 	CHG_PULL_SCL;
+	delay_us(2);
 
 	return b;
 }
@@ -1070,7 +1079,7 @@ __bit i2c_write_byte(uint8_t data)
 	}
 
 	// read ack bit
-	return i2c_read_bit();
+	return !i2c_read_bit();
 }
 
 uint8_t i2c_read_byte(__bit ack)
@@ -1142,7 +1151,7 @@ stop:
 
 static __bit charger_is_woke(void)
 {
-	return !P87;
+	return P87;
 }
 
 static uint8_t charger_read(void)
@@ -1194,8 +1203,10 @@ static void exec_system_command(void)
 		jump_to_usb_bootloader = 1;
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_CHG_READ) {
 		REG_SYS(COMMAND) = charger_read();
+		goto out_done;
 	} else if (REG_SYS(COMMAND) == REG_SYS_COMMAND_CHG_WRITE) {
 		REG_SYS(COMMAND) = charger_write();
+		goto out_done;
 	} else {
 		REG_SYS(COMMAND) = 0xff;
 		goto out_done;
