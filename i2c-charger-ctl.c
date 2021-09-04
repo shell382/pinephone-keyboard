@@ -18,6 +18,7 @@
  */
 
 #include "common.c"
+#include "firmware/registers.h"
 
 /*
  * - Independent control of
@@ -113,9 +114,11 @@ uint8_t read_power(int fd, uint8_t reg)
 {
 	int ret;
 	uint8_t val;
+
+	// initiate read of data from the charger
+	uint8_t buf[4] = { REG_SYS_CHG_ADDR, reg, 0xAA, REG_SYS_COMMAND_CHG_READ };
 	struct i2c_msg msgs[] = {
-		{ POWER_ADDR, 0, 1, &reg }, // address
-		{ POWER_ADDR, I2C_M_RD, 1, &val },
+		{ KB_ADDR, 0, 4, buf },
 	};
 
 	struct i2c_rdwr_ioctl_data msg = {
@@ -126,19 +129,50 @@ uint8_t read_power(int fd, uint8_t reg)
 	ret = ioctl(fd, I2C_RDWR, &msg);
 	syscall_error(ret < 0, "I2C_RDWR failed");
 
-	return val;
+	for (int i = 0; i < 5; i++) {
+		usleep(2000);
+
+		// read the result
+		uint8_t buf2[1] = { REG_SYS_CHG_DATA, };
+		uint8_t buf3[2] = { };
+		struct i2c_msg msgs2[] = {
+			{ KB_ADDR, 0, 1, buf2 },
+			{ KB_ADDR, I2C_M_RD, sizeof(buf3), buf3 },
+		};
+
+		struct i2c_rdwr_ioctl_data msg2 = {
+			.msgs = msgs2,
+			.nmsgs = sizeof(msgs2) / sizeof(msgs2[0])
+		};
+
+		ret = ioctl(fd, I2C_RDWR, &msg2);
+		syscall_error(ret < 0, "I2C_RDWR failed");
+
+//		debug("rd %02x %02x\n", buf3[0], buf3[1]);
+
+		if (buf3[1] == REG_SYS_COMMAND_CHG_READ)
+			continue;
+		
+		if (buf3[1] == 0)
+			return buf3[0];
+		if (buf3[1] == 0xff)
+			error("Proxy read failed with %x\n", buf3[1]);
+	}
+
+	error("Proxy read timed out\n");
+	return 0;
 }
 
 void write_power(int fd, uint8_t reg, uint8_t val)
 {
 	int ret;
-	uint8_t buf[] = {reg, val};
 
+	uint8_t buf[4] = { REG_SYS_CHG_ADDR, reg, val, REG_SYS_COMMAND_CHG_WRITE };
 	struct i2c_msg msgs[] = {
-		{ POWER_ADDR, 0, 2, buf },
+		{ KB_ADDR, 0, 4, buf },
 	};
 
-	debug("wr 0x%02hhx: %02hhx\n", reg, val);
+//	debug("wr 0x%02hhx: %02hhx\n", reg, val);
 
 	struct i2c_rdwr_ioctl_data msg = {
 		.msgs = msgs,
@@ -147,6 +181,34 @@ void write_power(int fd, uint8_t reg, uint8_t val)
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
 	syscall_error(ret < 0, "I2C_RDWR failed");
+
+	for (int i = 0; i < 5; i++) {
+		usleep(2000);
+
+		// read the result
+		uint8_t buf2[1] = { REG_SYS_COMMAND, };
+		uint8_t buf3[1] = { };
+		struct i2c_msg msgs2[] = {
+			{ KB_ADDR, 0, 1, buf2 },
+			{ KB_ADDR, I2C_M_RD, sizeof(buf3), buf3 },
+		};
+
+		struct i2c_rdwr_ioctl_data msg2 = {
+			.msgs = msgs2,
+			.nmsgs = sizeof(msgs2) / sizeof(msgs2[0])
+		};
+
+		ret = ioctl(fd, I2C_RDWR, &msg2);
+		syscall_error(ret < 0, "I2C_RDWR failed");
+
+		if (buf3[1] == REG_SYS_COMMAND_CHG_WRITE)
+			continue;
+		
+		if (buf3[1] == 0)
+			return;
+		if (buf3[1] == 0xff)
+			error("Proxy write failed with %x\n", buf3[0]);
+	}
 }
 
 void update_power(int fd, uint8_t reg, uint8_t mask, uint8_t val)
