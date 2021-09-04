@@ -2149,11 +2149,15 @@ void main(void)
 
 				// Check for Pine + F + # being held during powerup
 				if ((keys[0] & BIT(2)) && (keys[4] & BIT(2))) {
-#if CONFIG_STOCK_FW
 					// H - stay in main firmware
-					if (keys[6] & BIT(2))
+					if (keys[6] & BIT(2)) {
+#if CONFIG_STOCK_FW
 						user_app_checked = 1;
+#else
+						RSTSC &= ~BIT(7);
+						RSTSC |= BIT(7);
 #endif
+					}
 
 					// B - jump to USB bootloader
 					if (keys[5] & BIT(3))
