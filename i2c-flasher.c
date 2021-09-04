@@ -410,7 +410,7 @@ int main(int ac, char* av[])
 			if (i == 10)
 				error("Reset command issued over I2C failed, stock firmware failed to report itself within 2.5s");
 		} else if (!strcmp(entry_type, "manual")) {
-			printf("Please power off the keyboard by holding the keyboard power key for > 12s, then release the power key and press it shortly, once, to power it on again.\n");
+			printf("Please power cycle the keyboard by removing and reinserting the pinephone.\n");
 
 			while (true) {
 				if (is_kb_stock_connected()) {
@@ -487,6 +487,9 @@ int main(int ac, char* av[])
 				printf("0x%02x: 0x%02hhx\n", i, devid[i]);
 		} else if (!strcmp(av[i], "reset")) {
 			printf("Restarting the MCU\n");
+
+			uint8_t cmd1[] = {0};
+			wr_buf(REG_SYS_USER_APP_BLOCK, cmd1, sizeof cmd1);
 
 			// send MCU reset command
 			uint8_t cmd[] = {REG_SYS_COMMAND_MCU_RESET};
