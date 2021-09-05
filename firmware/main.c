@@ -1006,7 +1006,7 @@ static __bit poll_scl_busy(void)
 }
 */
 
-void i2c_start_condition(void)
+static void i2c_start_condition(void)
 {
 	CHG_RELEASE_SDA;
 	delay_us(5);
@@ -1021,7 +1021,7 @@ void i2c_start_condition(void)
 	delay_us(5);
 }
 
-void i2c_stop_condition(void)
+static void i2c_stop_condition(void)
 {
 	CHG_PULL_SDA;
 	delay_us(5);
@@ -1033,68 +1033,78 @@ void i2c_stop_condition(void)
 	delay_us(5);
 }
 
-void i2c_write_bit(__bit b)
+static __bit i2c_write_byte(uint8_t data)
 {
-	if (b)
-		CHG_RELEASE_SDA;
-	else
-		CHG_PULL_SDA;
+	uint8_t i;
+	__bit ack = 1;
+
+	// write data
+	for (i = 0; i < 8; i++) {
+		// write the most-significant bit
+		if (data & 0x80)
+			CHG_RELEASE_SDA;
+		else
+			CHG_PULL_SDA;
+		delay_us(1);
+
+		CHG_RELEASE_SCL;
+		delay_us(5);
+
+		CHG_PULL_SCL;
+		delay_us(1);
+
+		data <<= 1;
+	}
+
 	delay_us(1);
 
-	CHG_RELEASE_SCL;
-	delay_us(5);
-
-	CHG_PULL_SCL;
-	delay_us(1);
-}
-
-__bit i2c_read_bit(void)
-{
-	__bit b;
-
+	// read ack bit
 	CHG_RELEASE_SDA;
-
 	CHG_RELEASE_SCL;
-	delay_us(4);
+	delay_us(3);
 
 	if (CHG_PORT & CHG_SDA)
-		b = 1;
-	else
-		b = 0;
+		ack = 0;
 
 	CHG_PULL_SCL;
 	delay_us(2);
 
-	return b;
+	return ack;
 }
 
-__bit i2c_write_byte(uint8_t data)
-{
-	uint8_t i;
-
-	// write data
-	for (i = 0; i < 8; i++) {
-		i2c_write_bit(data & 0x80);   // write the most-significant bit
-		data <<= 1;
-	}
-
-	// read ack bit
-	return !i2c_read_bit();
-}
-
-uint8_t i2c_read_byte(__bit ack)
+static uint8_t i2c_read_byte(__bit ack)
 {
 	uint8_t data = 0;
 	uint8_t i;
 
+	CHG_RELEASE_SDA;
+
 	// read data
 	for (i = 0; i < 8; i++) {
 		data <<= 1;
-		data |= i2c_read_bit();
+
+		CHG_RELEASE_SCL;
+		delay_us(4);
+
+		if (CHG_PORT & CHG_SDA)
+			data |= 1;
+
+		CHG_PULL_SCL;
+		delay_us(2);
 	}
 
 	// send ack
-	i2c_write_bit(!ack);
+	if (ack)
+		CHG_PULL_SDA;
+	else
+		CHG_RELEASE_SDA;
+	delay_us(1);
+
+	CHG_RELEASE_SCL;
+	delay_us(5);
+
+	CHG_PULL_SCL;
+	delay_us(1);
 	return data;
 }
 

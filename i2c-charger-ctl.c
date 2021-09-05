@@ -130,7 +130,7 @@ uint8_t read_power(int fd, uint8_t reg)
 	syscall_error(ret < 0, "I2C_RDWR failed");
 
 	for (int i = 0; i < 5; i++) {
-		usleep(2000);
+		usleep(700);
 
 		// read the result
 		uint8_t buf2[1] = { REG_SYS_CHG_DATA, };
@@ -183,7 +183,7 @@ void write_power(int fd, uint8_t reg, uint8_t val)
 	syscall_error(ret < 0, "I2C_RDWR failed");
 
 	for (int i = 0; i < 5; i++) {
-		usleep(2000);
+		usleep(700);
 
 		// read the result
 		uint8_t buf2[1] = { REG_SYS_COMMAND, };
