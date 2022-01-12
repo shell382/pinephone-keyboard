@@ -46,6 +46,7 @@ static void syscall_error(int is_err, const char* fmt, ...)
 	exit(1);
 }
 
+__attribute__((noreturn))
 static void error(const char* fmt, ...)
 {
 	va_list ap;
@@ -84,7 +85,7 @@ static bool read_file(const char* path, char* buf, size_t size)
 
 static int open_usb_dev(uint16_t vid, uint16_t pid)
 {
-	char path[256], buf[256];
+	char path[512], buf[256];
 	struct dirent *e;
 	unsigned e_vid, e_pid, bus, dev;
 	int fd = -1, ret;
