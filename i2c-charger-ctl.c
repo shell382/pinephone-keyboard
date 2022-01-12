@@ -201,12 +201,12 @@ void write_power(int fd, uint8_t reg, uint8_t val)
 		ret = ioctl(fd, I2C_RDWR, &msg2);
 		syscall_error(ret < 0, "I2C_RDWR failed");
 
-		if (buf3[1] == REG_SYS_COMMAND_CHG_WRITE)
+		if (buf3[0] == REG_SYS_COMMAND_CHG_WRITE)
 			continue;
 		
-		if (buf3[1] == 0)
+		if (buf3[0] == 0)
 			return;
-		if (buf3[1] == 0xff)
+		if (buf3[0] == 0xff)
 			error("Proxy write failed with %x\n", buf3[0]);
 	}
 }
