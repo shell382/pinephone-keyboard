@@ -496,8 +496,6 @@ int main(int ac, char* av[])
 		//update_power(fd, SYS_CTL0, BIT(2), BIT(2));
 	}
 
-	int lfd = gpio_setup_pl12(GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_UP | /*GPIO_V2_LINE_FLAG_ACTIVE_HIGH |*/ GPIO_V2_LINE_FLAG_EDGE_FALLING);
-
 //	update_power(fd, SYS_CTL1, 0x03, 0x00); // disable automatic control based on load detection
 //	update_power(fd, SYS_CTL0, 0x1e, BIT(1) | BIT(2)); // 2=boost 1=charger enable
 //	update_power(fd, SYS_CTL3, BIT(5), 0); // disable "2x key press = shutdown" function
