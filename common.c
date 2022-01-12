@@ -229,7 +229,7 @@ static int pogo_i2c_open(void)
 		snprintf(path, sizeof path, "/dev/i2c-%d", i);
 		
 		int fd = open(path, O_RDWR);
-		syscall_error(fd < 0, "open(%s) failed");
+		syscall_error(fd < 0, "open(%s) failed", path);
 
 		return fd;		
 	}
@@ -331,7 +331,7 @@ static int gpiochip_open(const char* match)
 		snprintf(path, sizeof path, "/dev/gpiochip%d", i);
 
 		int fd = open(path, O_RDWR);
-		syscall_error(fd < 0, "open(%s) failed");
+		syscall_error(fd < 0, "open(%s) failed", path);
 
 		return fd;
 	}
