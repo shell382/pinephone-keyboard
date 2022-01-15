@@ -16,7 +16,7 @@ $(OUT)ppkb-usb-debugger: usb-debugger.c common.c
 
 $(OUT)kmap.h: keymaps/physical-map.txt keymaps/factory-keymap.txt
 	@mkdir -p $(OUT)
-	php keymaps/map-to-c.php $^ > $@
+	php keymaps/map-to-c.php $^ $@
 
 $(OUT)ppkb-i2c-inputd: i2c-inputd.c $(OUT)kmap.h common.c
 	@mkdir -p $(OUT)

@@ -20,8 +20,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+set_error_handler(function($severity, $message, $file, $line) {
+	if (!(error_reporting() & $severity))
+		return;
+
+	throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+if (count($argv) != 4) {
+	echo "Usage: $argv[0] <physmap> <keymap> <output>\n";
+	exit(1);
+}
+
 $pmap = file_get_contents($argv[1]);
 $kmap = file_get_contents($argv[2]);
+
+ob_start();
 
 // high nibble = row, low nibble col
 $el_phys_map = [];
@@ -100,3 +114,6 @@ function kmap_to_code($name, $map) {
 kmap_to_code("keymap_base", $phys_key_base);
 kmap_to_code("keymap_fn", $phys_key_fn);
 kmap_to_code("keymap_pine", $phys_key_pine);
+
+file_put_contents($argv[3], ob_get_contents());
+ob_end_clean();
