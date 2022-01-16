@@ -224,7 +224,7 @@ static int pogo_i2c_open(void)
 		if (!read_file(path, buf, sizeof buf))
 			continue;
 		
-		if (!strstr(buf, "OF_FULLNAME=/soc/i2c@1c2b400"))
+		if (!strstr(buf, "OF_FULLNAME=/soc/i2c@1c2b400") && !strstr(buf, "OF_FULLNAME=/i2c@ff140000"))
 			continue;
 		
 		snprintf(path, sizeof path, "/dev/i2c-%d", i);
@@ -337,11 +337,10 @@ static int gpiochip_open(const char* match)
 		return fd;
 	}
 
-	error("Can't find %s gpiochip", match);
 	return -1;
 }
 
-static int gpio_setup_pl12(unsigned flags)
+static int gpio_setup_pogo_int(unsigned flags)
 {
 	int ret;
 	struct gpio_v2_line_request req = {
@@ -352,6 +351,14 @@ static int gpio_setup_pl12(unsigned flags)
 	};
 
 	int fd = gpiochip_open("OF_FULLNAME=/soc/pinctrl@1f02c00");
+	if (fd < 0) {
+		fd = gpiochip_open("OF_FULLNAME=/pinctrl/gpio@ff788000");
+		if (fd < 0)
+			error("Can't find gpiochip for POGO interrupt pin");
+		
+		// On Pinephone Pro, POGO-INT is GPIO3_A0
+		req.offsets[0] = 0;
+	}
 
 	ret = ioctl(fd, GPIO_V2_GET_LINE_IOCTL, &req);
 	syscall_error(ret < 0, "GPIO_V2_GET_LINE_IOCTL failed");

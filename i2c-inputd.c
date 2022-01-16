@@ -302,7 +302,7 @@ int main(int ac, char* av[])
 	fd = pogo_i2c_open();
 	uinput_fd = open_uinput_dev();
 
-	int lfd = gpio_setup_pl12(GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_UP | /*GPIO_V2_LINE_FLAG_ACTIVE_HIGH |*/ GPIO_V2_LINE_FLAG_EDGE_FALLING);
+	int lfd = gpio_setup_pogo_int(GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_UP | /*GPIO_V2_LINE_FLAG_ACTIVE_HIGH |*/ GPIO_V2_LINE_FLAG_EDGE_FALLING);
 
 	struct pollfd fds[2] = {
 		{ .fd = lfd, .events = POLLIN, },
