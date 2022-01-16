@@ -1,5 +1,5 @@
-Userspace input device daemon
------------------------------
+Userspace input device daemon and other tools
+---------------------------------------------
 
 - allow to read keymap config from a file instead of compiling it in
 
@@ -20,3 +20,7 @@ Modes:
   hold multiple keys at once)
 - ???
 
+Charger tool:
+
+- implement dumping of charger status to bash variables
+- generally improve the CLI interface
