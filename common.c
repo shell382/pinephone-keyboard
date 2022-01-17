@@ -231,7 +231,7 @@ static int pogo_i2c_open(void)
 		
 		int fd = open(path, O_RDWR);
 		if (fd < 0 && errno == ENOENT)
-			printf("WARNING: The distribution you are using probably uses the kernel driver for pinephone keyboard, and is blocking access to the POGO I2C from userspace. You need to disable the driver to gain access.\n");
+			printf("WARNING: You may need to load the i2c-dev module (modprobe i2c-dev).\n");
 		syscall_error(fd < 0, "open(%s) failed", path);
 
 		return fd;		
