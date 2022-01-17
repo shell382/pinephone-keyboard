@@ -230,6 +230,8 @@ static int pogo_i2c_open(void)
 		snprintf(path, sizeof path, "/dev/i2c-%d", i);
 		
 		int fd = open(path, O_RDWR);
+		if (fd < 0 && errno == ENOENT)
+			printf("WARNING: The distribution you are using probably uses the kernel driver for pinephone keyboard, and is blocking access to the POGO I2C from userspace. You need to disable the driver to gain access.\n");
 		syscall_error(fd < 0, "open(%s) failed", path);
 
 		return fd;		
@@ -361,6 +363,8 @@ static int gpio_setup_pogo_int(unsigned flags)
 	}
 
 	ret = ioctl(fd, GPIO_V2_GET_LINE_IOCTL, &req);
+	if (ret < 0 && errno == EBUSY)
+		printf("WARNING: The distribution you are using probably uses the kernel driver for pinephone keyboard, and is blocking access to the POGO pins from userspace. Or something else in your userspace already claimed the POGO interrupt pin.\n");
 	syscall_error(ret < 0, "GPIO_V2_GET_LINE_IOCTL failed");
 
 	close(fd);
