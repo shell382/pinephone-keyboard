@@ -34,9 +34,9 @@ $(OUT)ppkb-i2c-flasher: i2c-flasher.c common.c
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) -o $@ $<
 
-$(OUT)ppkb-i2c-selftest: i2c-selftest.c common.c
-	@mkdir -p $(OUT)
-	$(CC) $(CFLAGS) -o $@ $<
+#$(OUT)ppkb-i2c-selftest: i2c-selftest.c common.c
+#	@mkdir -p $(OUT)
+#	$(CC) $(CFLAGS) -o $@ $<
 
 $(OUT)fw-stock.bin $(OUT)fw-user.bin: $(wildcard firmware/*.*)
 	@mkdir -p $(OUT)
