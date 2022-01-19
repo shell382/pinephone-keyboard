@@ -282,8 +282,8 @@ void power_status(int fd)
 		r0 & BIT(2) ? " cv_timeout" : "",
 		r0 & BIT(1) ? " chg_timeout" : "",
 		r0 & BIT(0) ? " trickle_timeout" : "",
-		r1 & BIT(6) ? " VIN overvoltage" : "",
-		r1 & BIT(5) ? " <= 75mA load" : ""
+		r1 & BIT(5) ? " VIN overvoltage (> 5.6V)" : "",
+		r1 & BIT(6) ? " <= 75mA load" : ""
 	);
 
 	printf("Button: %02hhx (%s%s%s%s)\n", r2,
