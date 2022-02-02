@@ -36,7 +36,12 @@ void dump_log(int fd)
 	};
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
-	syscall_error(ret < 0, "I2C_RDWR failed");
+	if (ret < 0) {
+		printf("ERROR: (%"PRIu64") I2C_RDWR failed (%d)\n", time_abs(), errno);
+		fflush(stdout);
+		usleep(50000);
+		return;
+	}
 
 	int i;
 	for (i = 0; i < sizeof(buf) && buf[i]; i++);
