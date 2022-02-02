@@ -315,8 +315,8 @@ int main(int ac, char* av[])
 
 	debug("\033[2J");
 
-	uint8_t buf[4] = {1, 2, 3, 4};
-	ret = write_kb(fd, buf);
+//	uint8_t buf[4] = {1, 2, 3, 4};
+//	ret = write_kb(fd, buf);
 
 	// - we rely on POGO interrupt to get the key updates
 	// - if any key is pressed, we will in addition poll
