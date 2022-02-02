@@ -43,17 +43,18 @@ int read_kb(int fd, uint8_t data[16])
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
 	if (ret < 0) {
-		printf("I2C_RDWR failed (%d)\n", errno);
+		printf("WARNING: I2C_RDWR failed (%d)\n", errno);
 		return -1;
 	}
 	
-//	for (int i = 0; i < REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8 + 1; i++)
-//		printf("%02hhx", data[i]);
-//	printf("\n");
-
 	uint8_t crc = crc8(data + 1, REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8);
 	if (crc != data[0]) {
-		printf("Key data CRC8 mismatch\n");
+		printf("WARNING: Key data CRC8 mismatch: ");
+
+		for (int i = 0; i < REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8 + 1; i++)
+			printf("%02hhx", data[i]);
+		printf("\n");
+
 		return -2;
 	}
 
@@ -179,7 +180,8 @@ static int pine_mode = 0;
 void on_press(uint8_t phys_idx)
 {
 	int key = keymap_base[phys_idx][0];
-//	printf("press %02hhx %s\n", phys_idx, key ? key_names[key] : "");
+
+	printf("press %02hhx %s\n", phys_idx, key ? key_names[key] : "");
 
 	if (key == KEY_FN || key == KEY_LEFTMETA) {
 		return;
@@ -228,7 +230,8 @@ void on_press(uint8_t phys_idx)
 void on_release(uint8_t phys_idx)
 {
 	int key = keymap_base[phys_idx][0];
-//	printf("release %02hhx %s\n", phys_idx, key ? key_names[key] : "");
+
+	printf("release %02hhx %s\n", phys_idx, key ? key_names[key] : "");
 
 	if (key == KEY_FN || key == KEY_LEFTMETA) {
 		return;
@@ -327,14 +330,16 @@ int main(int ac, char* av[])
 		ret = poll(fds, 1, pressed_count > 0 ? 200 : 10000);
 		syscall_error(ret < 0, "poll failed");
 
+		bool is_poll = false;
 		if (fds[0].revents & POLLIN) {
 			struct gpio_v2_line_event ev;
 			ssize_t len = read(lfd, &ev, sizeof ev);
 			syscall_error(len != sizeof ev, "Invalid event size");
 
-			printf("Interrupt received\n");
+			printf("%"PRIu64": Interrupt received\n", time_abs());
 		} else if (ret == 0 && pressed_count > 0) {
-			printf("Poll\n");
+			printf("%"PRIu64": Poll\n", time_abs());
+			is_poll = true;
 		} else {
 			continue;
 		}
@@ -345,16 +350,19 @@ int main(int ac, char* av[])
 			
 		while (retries_left--) {
 			ret = read_kb(fd, buf);
-			if (ret) {
+			if (ret)
 				continue;
-			}
 		}
 		
 		if (retries_left == 0 && ret) {
-			printf("Failed to read keyboard data after 3 retries\n");
+			printf("%"PRIu64": WARNING: Failed to read keyboard data after 3 retries\n", time_abs());
 		}
 
 		if (ret == 0) {
+			if (is_poll && pressed_count == 0) {
+				printf("%"PRIu64": WARNING: Missed interrupt for key release\n", time_abs());
+			}
+		
 			print_bitmap(buf + 1);
 			update_keys(buf + 1);
 		}
