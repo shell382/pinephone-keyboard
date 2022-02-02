@@ -4,7 +4,9 @@ OUT ?= build/
 CFLAGS ?= -O2 -g0
 CFLAGS += -DVERSION="\"$(VERSION)\"" -I. -I$(OUT) -Wall -Wno-unused-variable -Wno-unused-function
 
-all: $(OUT)ppkb-i2c-inputd $(OUT)ppkb-usb-flasher $(OUT)ppkb-usb-debugger $(OUT)fw-stock.bin $(OUT)ppkb-i2c-debugger $(OUT)ppkb-i2c-charger-ctl $(OUT)ppkb-i2c-flasher $(OUT)ppkb-i2c-selftest
+tools: $(OUT)ppkb-i2c-inputd $(OUT)ppkb-usb-flasher $(OUT)ppkb-usb-debugger $(OUT)ppkb-i2c-debugger $(OUT)ppkb-i2c-charger-ctl $(OUT)ppkb-i2c-flasher $(OUT)ppkb-i2c-selftest
+
+all: tools $(OUT)fw-stock.bin
 
 $(OUT)ppkb-usb-flasher: usb-flasher.c common.c
 	@mkdir -p $(OUT)
