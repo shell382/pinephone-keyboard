@@ -42,15 +42,20 @@ int read_kb(int fd, uint8_t data[16])
 	};
 
 	ret = ioctl(fd, I2C_RDWR, &msg);
-	syscall_error(ret < 0, "I2C_RDWR failed");
+	if (ret < 0) {
+		printf("I2C_RDWR failed (%d)\n", errno);
+		return -1;
+	}
 	
 //	for (int i = 0; i < REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8 + 1; i++)
 //		printf("%02hhx", data[i]);
 //	printf("\n");
 
 	uint8_t crc = crc8(data + 1, REG_KEYMATRIX_STATE_END - REG_KEYMATRIX_STATE_CRC8);
-	if (crc != data[0])
-		return -1;
+	if (crc != data[0]) {
+		printf("Key data CRC8 mismatch\n");
+		return -2;
+	}
 
 	return ret == 2 ? 0 : -1;
 }
@@ -125,7 +130,7 @@ void emit_ev(int fd, int type, int code, int val)
 
 void print_bitmap(uint8_t* map)
 {
-	printf("\033[H");
+//	printf("\033[H");
 	for (int r = 0; r < 6; r++) {
 		if (r == 0) {
 			printf("   C");
@@ -313,8 +318,13 @@ int main(int ac, char* av[])
 	uint8_t buf[4] = {1, 2, 3, 4};
 	ret = write_kb(fd, buf);
 
+	// - we rely on POGO interrupt to get the key updates
+	// - if any key is pressed, we will in addition poll
+	//   for the current key status every 200ms of no interrupt
+	//   activity
+	
 	while (1) {
-		ret = poll(fds, 1, 10000);
+		ret = poll(fds, 1, pressed_count > 0 ? 200 : 10000);
 		syscall_error(ret < 0, "poll failed");
 
 		if (fds[0].revents & POLLIN) {
@@ -322,13 +332,30 @@ int main(int ac, char* av[])
 			ssize_t len = read(lfd, &ev, sizeof ev);
 			syscall_error(len != sizeof ev, "Invalid event size");
 
-			// read keyboard data
-			uint8_t buf[16];
-			ret = read_kb(fd, buf);
-			if (ret)
-				continue;
+			printf("Interrupt received\n");
+		} else if (ret == 0 && pressed_count > 0) {
+			printf("Poll\n");
+		} else {
+			continue;
+		}
 
-			//print_bitmap(buf + 1);
+		// read keyboard data
+		int retries_left = 3;
+		uint8_t buf[16];
+			
+		while (retries_left--) {
+			ret = read_kb(fd, buf);
+			if (ret) {
+				continue;
+			}
+		}
+		
+		if (retries_left == 0 && ret) {
+			printf("Failed to read keyboard data after 3 retries\n");
+		}
+
+		if (ret == 0) {
+			print_bitmap(buf + 1);
 			update_keys(buf + 1);
 		}
 	}
