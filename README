@@ -36,3 +36,46 @@ See also Samuel's kernel driver:
 Enjoy!
 
 	~megi
+
+-------------------------------------------------------------------------------------------------------------------------------------
+Pine Phone Keyboard Case (ppkc)
+
+notes on fixes and tweaks (2022-02):
+
+    The top number and function row has a slightly different sized set of keys, and type unreliably. User fixes exist.
+    PINE key can be rebound
+    The function keys F1-F10 require using the userspace daemon ppkb-i2c-inputd. F-11 . . .
+
+To use the userspace daemon instead of the kernel module – necessary if you want to have F1-F10:
+This is just a first pass at instructions based on what worked for me. Please proceed carefully, and edit as needed. The 'PinePhone keyboard userspace daemon' may lack auditing. Keyboard software can have large consequences.
+
+Do these steps directly in a terminal on your PinePhone (or via SSH to the phone).
+
+    git clone https://xff.cz/git/pinephone-keyboard/
+    change to your clone's directory (cd pinephone-keyboard)
+    run make (you may need to install dependencies – for me, I had to install php.)
+    blacklist the kb151 module, by adding “blacklist kb151” to /etc/modprobe.d/blacklist.conf
+    add i2c-dev to /etc/modules to make sure it loads at boot
+    sudo update-initramfs -u
+    to start automatically at boot, create a systemd service file in /etc/systemd/system/. Here's mine (change ExecStart path to point to where your built ppkb-i2c-inputd binary is):
+
+[Unit]
+Description=PinePhone keyboard userspace daemon
+
+[Service]
+Type=simple
+ExecStart=/home/mobian/src/pinephone-keyboard/build/ppkb-i2c-inputd
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+
+    verify it with sudo systemctl status FILENAME
+    enable it with sudo systemctl enable FILENAME
+
+Then reboot. 
+
+
+reference: https://wiki.mobian-project.org/doku.php?id=pine-phone-keyboard-case-ppkc
